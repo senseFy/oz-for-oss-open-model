@@ -91,6 +91,7 @@ Create `review.json` with this shape:
 
 ```json
 {
+  "verdict": "REJECT",
   "summary": "## Overview\n...\n\n## Concerns\n- ...\n\n## Verdict\nFound: 1 critical, 2 important, 3 suggestions\n\n**Request changes**",
   "comments": [
     {
@@ -106,6 +107,7 @@ Create `review.json` with this shape:
 
 Field rules:
 
+- `verdict` is required and must be exactly the string `"APPROVE"` or `"REJECT"` (uppercase). Map your final recommendation as: `Approve` or `Approve with nits` → `"APPROVE"`; `Request changes` → `"REJECT"`. The `verdict` and the human-readable recommendation in `summary` must agree.
 - `path` must be relative to the repository root.
 - `line` is required and must target the correct side.
 - `start_line` is optional and only for multi-line ranges.
@@ -118,7 +120,7 @@ The `summary` must include:
 - A high-level overview of the PR.
 - Important concerns and any untouched-code concerns that could not be commented inline.
 - Issue counts in the format `Found: X critical, Y important, Z suggestions`.
-- A final recommendation of `Approve`, `Approve with nits`, or `Request changes`.
+- A final recommendation of `Approve`, `Approve with nits`, or `Request changes`. This recommendation must match the top-level `verdict` field (`Approve` / `Approve with nits` → `"APPROVE"`; `Request changes` → `"REJECT"`).
 
 ## Final Checks
 
@@ -131,9 +133,9 @@ Before finishing:
 
 Your only output is the final `review.json`.
 
-## Cloud and Docker workflow mode
+## Cloud workflow mode
 
-If the prompt says you are in a cloud-environment or Docker workflow and the expected local context files are missing:
+If the prompt says you are in a cloud-environment workflow and the expected local context files are missing:
 
 - Create `pr_description.txt` yourself from the PR body or GitHub metadata provided in the prompt.
 - Fetch and check out the exact PR head branch by name before generating the diff. Run:
@@ -150,8 +152,7 @@ If the prompt says you are in a cloud-environment or Docker workflow and the exp
 - Convert the raw diff into `pr_diff.txt` using the annotated format above before reviewing.
 - If the prompt provides a `resolve_spec_context.py` command, run it only when spec validation is needed and write any returned spec content to `spec_context.md` before running review.
 - Still produce `review.json` and validate it with `jq`.
-- In Docker workflow mode, when the host already populated `pr_description.txt`, `pr_diff.txt`, or `spec_context.md`, use those files as-is and do not try to re-fetch GitHub context from inside the container.
-- In Docker workflow mode, do not expect `GH_TOKEN` inside the container. If the host did not pre-materialize the needed context, follow only the prompt's explicit fallback instructions.
-- In Docker workflow mode, after validation, write `review.json` to `/mnt/output/review.json`. The host workflow reads that file directly after the container exits, so do not run `oz artifact upload` or `oz-preview artifact upload`.
-- In cloud workflow mode, after validation, upload the result via `oz artifact upload review.json` (or `oz-preview artifact upload review.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment.
+- When the host already populated `pr_description.txt`, `pr_diff.txt`, or `spec_context.md` in the workflow checkout, use those files as-is and do not try to re-fetch GitHub context yourself.
+- The cloud run does not receive `GH_TOKEN`. If the host did not pre-materialize the needed context, follow only the prompt's explicit fallback instructions.
+- After validation, upload the result via `oz artifact upload review.json` (or `oz-preview artifact upload review.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. Do not write `review.json` to a `/mnt/...` mount path — the cloud agent has no such mount, and the host workflow only reads what you upload through the artifact CLI.
 - IMPORTANT: the upload subcommand is `artifact` (singular) on both `oz` and `oz-preview`. Do not use `artifacts` (plural) — that is not a valid subcommand and will fail.
