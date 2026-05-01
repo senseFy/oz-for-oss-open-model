@@ -128,6 +128,46 @@ class IssuesEventTest(unittest.TestCase):
         )
         self.assertEqual(decision.workflow, WORKFLOW_CREATE_SPEC_FROM_ISSUE)
 
+    def test_oz_agent_self_assignment_from_app_bot_is_dropped(self) -> None:
+        # The implementation workflow may best-effort assign
+        # ``oz-agent`` while handling an issue-comment mention. GitHub
+        # then emits a separate ``issues.assigned`` webhook authored by
+        # the GitHub App bot; routing that event would start a second
+        # implementation run for the same issue.
+        decision = route_event(
+            "issues",
+            {
+                "action": "assigned",
+                "assignee": {"login": OZ_AGENT_LOGIN},
+                "sender": {"login": "oz-for-oss[bot]", "type": "Bot"},
+                "issue": _issue(
+                    labels=["triaged", "ready-to-implement"],
+                    assignees=[OZ_AGENT_LOGIN],
+                ),
+            },
+        )
+        self.assertIsNone(decision.workflow)
+        self.assertIn("self-assignment", decision.reason)
+
+    def test_oz_agent_self_assignment_from_oz_agent_sender_is_dropped(self) -> None:
+        # GitHub issue timelines can surface the actor for the same
+        # app-driven assignment as ``oz-agent``. Treat that as the same
+        # self-assignment loop while preserving maintainer senders.
+        decision = route_event(
+            "issues",
+            {
+                "action": "assigned",
+                "assignee": {"login": OZ_AGENT_LOGIN},
+                "sender": {"login": OZ_AGENT_LOGIN, "type": "User"},
+                "issue": _issue(
+                    labels=["triaged", "ready-to-implement"],
+                    assignees=[OZ_AGENT_LOGIN],
+                ),
+            },
+        )
+        self.assertIsNone(decision.workflow)
+        self.assertIn("self-assignment", decision.reason)
+
     def test_assigned_ready_to_implement_takes_precedence_over_ready_to_spec(
         self,
     ) -> None:
