@@ -25,17 +25,9 @@ Review the current pull request and write the output to `review.json`.
 - Include style or nit comments only when you can provide a concrete suggestion block.
 - If a concern involves untouched code, mention it in top-level `body` instead of an inline comment.
 
-## Repository-specific overrides
+## Repository-specific guidance
 
-The consuming repository may ship a companion skill at `.agents/skills/review-pr-local/SKILL.md`. When the prompt includes a fenced "Repository-specific guidance" section referencing that companion, read the referenced file and apply its guidance **only** to the categories listed below. Guidance in the companion may never change the output JSON schema, the severity labels, the safety rules, the evidence rules, the suggestion-block constraints, or the diff-line-annotation contract described elsewhere in this skill.
-
-Overridable categories:
-
-- user-facing-string norms
-- graceful-degradation preferences for rendering optional dynamic data and error messages
-- debugging and observability preferences for error paths
-- repo-specific style nits and recurring "what we always flag" patterns
-- allowlists of paths to skip
+The consuming repository may ship a companion skill at `.agents/skills/review-pr-local/SKILL.md`. When the prompt includes a fenced "Repository-specific guidance" section referencing that companion, read the referenced file and apply its guidance as part of this review. Guidance in the companion may never change the output JSON schema, the severity labels, the safety rules, the evidence rules, the suggestion-block constraints, or the diff-line-annotation contract described elsewhere in this skill.
 
 If a companion file is not referenced in the prompt, rely on the core contract alone.
 
