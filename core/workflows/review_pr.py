@@ -1,7 +1,6 @@
 from __future__ import annotations
 import fnmatch
 import logging
-import re
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Mapping, TypedDict
@@ -20,6 +19,17 @@ from oz.helpers import (
 from oz.repo_local import (
     format_repo_local_prompt_section,
     repo_local_skill_path_for_dispatch,
+)
+from oz.review_validation import (
+    HUNK_HEADER_PATTERN,
+    ReviewComment,
+    build_diff_maps_from_files as _build_diff_maps,
+    deserialize_diff_content_map as _deserialize_diff_content_map,
+    deserialize_diff_line_map as _deserialize_diff_line_map,
+    normalize_review_path as _normalize_review_path,
+    normalize_review_payload as _normalize_review_payload,
+    serialize_diff_content_map as _serialize_diff_content_map,
+    serialize_diff_line_map as _serialize_diff_line_map,
 )
 from oz.triage import (
     format_stakeholders_for_prompt,
@@ -59,34 +69,6 @@ def _parse_verdict(review: Mapping[str, Any]) -> str:
         _VERDICT_APPROVE,
     )
     return _VERDICT_APPROVE
-
-
-
-class ReviewComment(TypedDict, total=False):
-    """Normalized review comment accepted by ``PullRequest.create_review``."""
-
-    path: str
-    line: int
-    side: str
-    body: str
-    start_line: int
-    start_side: str
-
-
-HUNK_HEADER_PATTERN = re.compile(
-    r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
-)
-
-SUGGESTION_BLOCK_PATTERN = re.compile(
-    r"```suggestion[^\n]*\r?\n(?P<content>.*?)\r?\n```",
-    re.DOTALL,
-)
-
-
-def _normalize_review_path(value: Any) -> str:
-    path = str(value or "").strip()
-    path = re.sub(r"^(a/|b/|\./)", "", path)
-    return path
 
 
 def _is_non_member_pr(pr: Any) -> bool:
@@ -294,241 +276,6 @@ def _resolve_recommended_reviewers(
         )
     return fallback
 
-
-def _commentable_lines_for_patch(patch: str | None) -> dict[str, set[int]]:
-    commentable_lines = {"LEFT": set(), "RIGHT": set()}
-    if not patch:
-        return commentable_lines
-
-    old_line: int | None = None
-    new_line: int | None = None
-
-    for raw_line in patch.splitlines():
-        header_match = HUNK_HEADER_PATTERN.match(raw_line)
-        if header_match:
-            old_line = int(header_match.group("old_start"))
-            new_line = int(header_match.group("new_start"))
-            continue
-        if old_line is None or new_line is None or raw_line.startswith("\\"):
-            continue
-        marker = raw_line[:1]
-        if marker == "-":
-            commentable_lines["LEFT"].add(old_line)
-            old_line += 1
-        elif marker == "+":
-            commentable_lines["RIGHT"].add(new_line)
-            new_line += 1
-        elif marker == " ":
-            commentable_lines["LEFT"].add(old_line)
-            commentable_lines["RIGHT"].add(new_line)
-            old_line += 1
-            new_line += 1
-
-    return commentable_lines
-
-
-def _line_content_for_patch(patch: str | None) -> dict[str, dict[int, str]]:
-    """Return file content known from the patch, keyed by side and line number."""
-    line_content: dict[str, dict[int, str]] = {"LEFT": {}, "RIGHT": {}}
-    if not patch:
-        return line_content
-
-    old_line: int | None = None
-    new_line: int | None = None
-
-    for raw_line in patch.splitlines():
-        header_match = HUNK_HEADER_PATTERN.match(raw_line)
-        if header_match:
-            old_line = int(header_match.group("old_start"))
-            new_line = int(header_match.group("new_start"))
-            continue
-        if old_line is None or new_line is None or raw_line.startswith("\\"):
-            continue
-        marker = raw_line[:1]
-        text = raw_line[1:]
-        if marker == "-":
-            line_content["LEFT"][old_line] = text
-            old_line += 1
-        elif marker == "+":
-            line_content["RIGHT"][new_line] = text
-            new_line += 1
-        elif marker == " ":
-            line_content["LEFT"][old_line] = text
-            line_content["RIGHT"][new_line] = text
-            old_line += 1
-            new_line += 1
-
-    return line_content
-
-
-def _build_diff_maps(
-    files: list[File],
-) -> tuple[dict[str, dict[str, set[int]]], dict[str, dict[str, dict[int, str]]]]:
-    diff_line_map: dict[str, dict[str, set[int]]] = {}
-    diff_content_map: dict[str, dict[str, dict[int, str]]] = {}
-    for file in files:
-        path = _normalize_review_path(file.filename)
-        patch = file.patch
-        diff_line_map[path] = _commentable_lines_for_patch(patch)
-        diff_content_map[path] = _line_content_for_patch(patch)
-    return diff_line_map, diff_content_map
-
-
-def _build_diff_line_map(files: list[File]) -> dict[str, dict[str, set[int]]]:
-    diff_line_map, _ = _build_diff_maps(files)
-    return diff_line_map
-
-
-def _extract_suggestion_blocks(body: str | None) -> list[list[str]]:
-    """Extract the line content of each ```suggestion fenced block in the body."""
-    blocks: list[list[str]] = []
-    for match in SUGGESTION_BLOCK_PATTERN.finditer(body or ""):
-        content = match.group("content")
-        # Strip the trailing newline introduced by the closing fence, but keep
-        # any internal blank lines intact. Also strip a trailing CR so that
-        # CRLF-encoded bodies compare equal to patch content, which has CR
-        # stripped by str.splitlines().
-        lines = [line.rstrip("\r") for line in content.split("\n")]
-        blocks.append(lines)
-    return blocks
-
-
-def _validate_suggestion_blocks(
-    comment: dict[str, Any],
-    diff_content_map: dict[str, dict[str, dict[int, str]]],
-) -> list[str]:
-    """Return a list of validation errors for the suggestion blocks in a comment.
-
-    Checks that the suggestion block does not duplicate context lines that
-    sit immediately outside the replaced `start_line`–`line` range on the
-    given side of the diff.
-    """
-    errors: list[str] = []
-    body = comment.get("body") or ""
-    blocks = _extract_suggestion_blocks(body)
-    if not blocks:
-        return errors
-
-    path = comment.get("path") or ""
-    side = comment.get("side") or "RIGHT"
-    line_no = comment.get("line")
-    if not isinstance(line_no, int):
-        return errors
-    start_line = comment.get("start_line") or line_no
-    content_for_side = diff_content_map.get(path, {}).get(side, {})
-
-    for block_index, block_lines in enumerate(blocks):
-        if not block_lines or block_lines == [""]:
-            continue
-        prev_context = content_for_side.get(start_line - 1)
-        next_context = content_for_side.get(line_no + 1)
-        first_line = block_lines[0]
-        last_line = block_lines[-1]
-        if prev_context is not None and first_line == prev_context:
-            errors.append(
-                f"suggestion block {block_index} duplicates the context line immediately above "
-                f"`start_line` ({start_line - 1}); that line is not replaced and will appear twice after the suggestion is applied"
-            )
-        if next_context is not None and last_line == next_context:
-            errors.append(
-                f"suggestion block {block_index} duplicates the context line immediately below "
-                f"`line` ({line_no + 1}); that line is not replaced and will appear twice after the suggestion is applied"
-            )
-    return errors
-
-
-def _normalize_review_payload(
-    review: dict[str, Any],
-    diff_line_map: dict[str, dict[str, set[int]]],
-    diff_content_map: dict[str, dict[str, dict[int, str]]] | None = None,
-) -> tuple[str, list[ReviewComment]]:
-    if not isinstance(review, dict):
-        raise ValueError("Review payload must be a JSON object.")
-
-    summary = review.get("summary") or ""
-    if not isinstance(summary, str):
-        raise ValueError("Review payload `summary` must be a string.")
-
-    raw_comments = review.get("comments") or []
-    if not isinstance(raw_comments, list):
-        raise ValueError("Review payload `comments` must be a list.")
-
-    normalized_comments: list[ReviewComment] = []
-    errors: list[str] = []
-
-    for index, raw_comment in enumerate(raw_comments):
-        if not isinstance(raw_comment, dict):
-            errors.append(f"`comments[{index}]` must be an object.")
-            continue
-
-        path = _normalize_review_path(raw_comment.get("path"))
-        line = raw_comment.get("line")
-        body = str(raw_comment.get("body") or "").strip()
-        side = raw_comment.get("side") if raw_comment.get("side") in {"LEFT", "RIGHT"} else "RIGHT"
-
-        if not path:
-            errors.append(f"`comments[{index}]` is missing `path`.")
-            continue
-        if path not in diff_line_map:
-            errors.append(
-                f"`comments[{index}]` references `{path}`, which is not part of the PR diff. Move that feedback to `summary` instead."
-            )
-            continue
-        if not isinstance(line, int) or line <= 0:
-            errors.append(
-                f"`comments[{index}]` for `{path}` must include a positive integer `line`."
-            )
-            continue
-        if not body:
-            errors.append(f"`comments[{index}]` for `{path}` is missing `body`.")
-            continue
-
-        allowed_lines = diff_line_map[path][side]
-        if line not in allowed_lines:
-            errors.append(
-                f"`comments[{index}]` references `{path}:{line}` on `{side}`, which is not commentable in the PR diff."
-            )
-            continue
-
-        normalized_comment: ReviewComment = {
-            "path": path,
-            "line": line,
-            "side": side,
-            "body": body,
-        }
-
-        if "start_line" in raw_comment and raw_comment.get("start_line") is not None:
-            start_line = raw_comment.get("start_line")
-            if not isinstance(start_line, int) or start_line <= 0 or start_line >= line:
-                errors.append(
-                    f"`comments[{index}]` for `{path}` has invalid `start_line`; it must be a positive integer smaller than `line`."
-                )
-                continue
-            if start_line not in allowed_lines:
-                errors.append(
-                    f"`comments[{index}]` references `{path}:{start_line}` on `{side}` as `start_line`, which is not commentable in the PR diff."
-                )
-                continue
-            normalized_comment["start_line"] = start_line
-            normalized_comment["start_side"] = side
-
-        if diff_content_map is not None:
-            suggestion_errors = _validate_suggestion_blocks(
-                normalized_comment, diff_content_map
-            )
-            if suggestion_errors:
-                for err in suggestion_errors:
-                    errors.append(
-                        f"`comments[{index}]` for `{path}:{line}` on `{side}` has an invalid suggestion block: {err}."
-                    )
-                continue
-
-        normalized_comments.append(normalized_comment)
-
-    for err in errors:
-        print(f"[review-validation] Dropped comment: {err}")
-
-    return summary.strip(), normalized_comments
 
 
 # Hint appended to review-related comments so reviewers know they can
@@ -807,46 +554,6 @@ def _format_spec_context_text(spec_context: Mapping[str, Any]) -> str:
     return "\n\n".join(sections).strip()
 
 
-
-def _serialize_diff_line_map(
-    diff_line_map: dict[str, dict[str, set[int]]],
-) -> dict[str, dict[str, list[int]]]:
-    return {
-        path: {side: sorted(lines) for side, lines in sides.items()}
-        for path, sides in diff_line_map.items()
-    }
-
-
-def _deserialize_diff_line_map(
-    serialized: Mapping[str, Mapping[str, list[int]]],
-) -> dict[str, dict[str, set[int]]]:
-    return {
-        str(path): {str(side): set(lines or []) for side, lines in sides.items()}
-        for path, sides in serialized.items()
-    }
-
-
-def _serialize_diff_content_map(
-    diff_content_map: dict[str, dict[str, dict[int, str]]],
-) -> dict[str, dict[str, dict[str, str]]]:
-    return {
-        path: {side: {str(line): text for line, text in lines.items()} for side, lines in sides.items()}
-        for path, sides in diff_content_map.items()
-    }
-
-
-def _deserialize_diff_content_map(
-    serialized: Mapping[str, Mapping[str, Mapping[str, str]]],
-) -> dict[str, dict[str, dict[int, str]]]:
-    return {
-        str(path): {
-            str(side): {int(line): str(text) for line, text in lines.items()}
-            for side, lines in sides.items()
-        }
-        for path, sides in serialized.items()
-    }
-
-
 def gather_review_context(
     github: Repository,
     *,
@@ -1022,7 +729,9 @@ def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
         - {context['supplemental_skill_line']}
         - You are running in a cloud environment dispatched by the Vercel control plane. The PR description, annotated diff, and (when available) spec context are inlined below — read them directly instead of fetching anything from GitHub or running the spec-context helper.
         - Do not run `git fetch`, `git checkout`, `gh`, ad-hoc GitHub API calls, or the spec-context helper from this run. The control plane already gathered the GitHub-backed context and this run does not receive `GH_TOKEN`.
-        - Only include comments for files and lines that exist in the inlined PR diff. If feedback does not map to a diff file or commentable diff line, put it in `summary` instead of `comments`.
+        - Only include comments for files and lines that exist in the inlined PR diff. Every inline comment must map to an explicit `[NEW:n]`, `[OLD:n]`, or `[OLD:n,NEW:m]` annotation from the inlined diff. If feedback does not map to a diff file or commentable diff line, put it in `summary` instead of `comments`.
+        - Before validating, write the inlined PR diff exactly to `pr_diff.txt` so the bundled `validate_review_json.py` script can compare `review.json` against the same annotated diff you reviewed.
+        - Run `python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff pr_diff.txt` after creating `review.json`, or locate the bundled `validate_review_json.py` under the packaged `review-pr` skill directory and run that copy. Fix every reported error before upload.
         - Do not post the final review directly.
         - After you create and validate `review.json`, upload it as an artifact via `oz artifact upload {_REVIEW_OUTPUT_FILENAME}` (or `oz-preview artifact upload {_REVIEW_OUTPUT_FILENAME}` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
 
