@@ -7,13 +7,18 @@ from unittest.mock import MagicMock
 
 from . import conftest  # noqa: F401
 
+from github.GithubException import GithubException
+
 from workflows.review_pr import (  # type: ignore[import-not-found]
     _deterministic_reviewer_from_stakeholders,
     _format_non_member_review_section,
     _format_review_completion_message,
+    _is_team_slug,
     _parse_verdict,
     _resolve_recommended_reviewers,
+    _split_reviewers,
     _stakeholder_pattern_matches,
+    _team_slug_only,
     apply_review_result,
     RETRIGGER_HINT,
 )
@@ -25,6 +30,11 @@ STAKEHOLDERS = [
     {"pattern": "/docs/", "owners": ["docs-owner"]},
     {"pattern": "/docs/api/", "owners": ["api-owner"]},
     {"pattern": "/src/*.py", "owners": ["python-owner"]},
+]
+
+STAKEHOLDERS_WITH_TEAM = [
+    {"pattern": "/", "owners": ["warpdotdev/oss-maintainers"]},
+    {"pattern": "/docs/", "owners": ["docs-owner"]},
 ]
 
 
@@ -166,6 +176,15 @@ class FormatReviewCompletionMessageTest(unittest.TestCase):
     def test_plain_comment_no_reviewers(self) -> None:
         message = _format_review_completion_message("COMMENT", [])
         self.assertIn("completed the review", message)
+        self.assertIn("no human review was requested", message)
+        self.assertNotIn("posted feedback", message)
+        self.assertNotIn("approved", message.lower())
+
+    def test_plain_comment_null_reviewers(self) -> None:
+        message = _format_review_completion_message("COMMENT", None)
+        self.assertIn("completed the review", message)
+        self.assertIn("no human review was requested", message)
+        self.assertNotIn("posted feedback", message)
         self.assertNotIn("approved", message.lower())
 
 
@@ -432,6 +451,160 @@ class ApplyReviewResultVerdictTest(unittest.TestCase):
             approve_pr.create_review.call_args.kwargs["body"],
             reject_pr.create_review.call_args.kwargs["body"],
         )
+
+
+class TeamSlugDetectionTest(unittest.TestCase):
+    def test_user_login_is_not_team(self) -> None:
+        self.assertFalse(_is_team_slug("alice"))
+        self.assertFalse(_is_team_slug("docs-owner"))
+
+    def test_org_team_slug_is_team(self) -> None:
+        self.assertTrue(_is_team_slug("warpdotdev/oss-maintainers"))
+        self.assertTrue(_is_team_slug("acme/reviewers"))
+
+    def test_team_slug_only_strips_org_prefix(self) -> None:
+        self.assertEqual(_team_slug_only("warpdotdev/oss-maintainers"), "oss-maintainers")
+        self.assertEqual(_team_slug_only("acme/reviewers"), "reviewers")
+
+    def test_team_slug_only_on_plain_login_returns_login(self) -> None:
+        self.assertEqual(_team_slug_only("alice"), "alice")
+
+
+class SplitReviewersTest(unittest.TestCase):
+    def test_all_users(self) -> None:
+        users, teams = _split_reviewers(["alice", "bob"])
+        self.assertEqual(users, ["alice", "bob"])
+        self.assertEqual(teams, [])
+
+    def test_all_teams(self) -> None:
+        users, teams = _split_reviewers(["warpdotdev/oss-maintainers"])
+        self.assertEqual(users, [])
+        self.assertEqual(teams, ["oss-maintainers"])
+
+    def test_mixed(self) -> None:
+        users, teams = _split_reviewers(["alice", "warpdotdev/reviewers"])
+        self.assertEqual(users, ["alice"])
+        self.assertEqual(teams, ["reviewers"])
+
+    def test_empty(self) -> None:
+        users, teams = _split_reviewers([])
+        self.assertEqual(users, [])
+        self.assertEqual(teams, [])
+
+
+class ApplyReviewResultTeamReviewerTest(unittest.TestCase):
+    """Verify ``apply_review_result`` routes team slugs to ``team_reviewers``."""
+
+    def _make_context(self, *, stakeholder_entries: list | None = None) -> dict:
+        return {
+            "owner": "acme",
+            "repo": "widgets",
+            "pr_number": 7,
+            "requester": "alice",
+            "is_non_member": True,
+            "pr_author_login": "contributor",
+            "stakeholder_entries": stakeholder_entries or STAKEHOLDERS_WITH_TEAM,
+            "stakeholder_logins": [],
+            "diff_line_map": {},
+            "diff_content_map": {},
+        }
+
+    def _make_github(self, pr: MagicMock) -> MagicMock:
+        github = MagicMock()
+        github.get_pull.return_value = pr
+        return github
+
+    def test_team_slug_routed_to_team_reviewers_param(self) -> None:
+        pr = MagicMock()
+        github = self._make_github(pr)
+        progress = MagicMock()
+        apply_review_result(
+            github,
+            context=self._make_context(),
+            run=MagicMock(),
+            result={
+                "verdict": "APPROVE",
+                "summary": "Looks good",
+                "comments": [],
+                "recommended_reviewers": ["warpdotdev/oss-maintainers"],
+            },
+            progress=progress,
+        )
+        pr.create_review_request.assert_called_once_with(
+            team_reviewers=["oss-maintainers"]
+        )
+
+    def test_user_login_routed_to_reviewers_param(self) -> None:
+        pr = MagicMock()
+        github = self._make_github(pr)
+        progress = MagicMock()
+        apply_review_result(
+            github,
+            context=self._make_context(
+                stakeholder_entries=[
+                    {"pattern": "/docs/", "owners": ["docs-owner"]},
+                ],
+            ),
+            run=MagicMock(),
+            result={
+                "verdict": "APPROVE",
+                "summary": "Looks good",
+                "comments": [],
+                "recommended_reviewers": ["docs-owner"],
+            },
+            progress=progress,
+        )
+        pr.create_review_request.assert_called_once_with(
+            reviewers=["docs-owner"]
+        )
+
+    def test_progress_comment_omits_reviewers_on_api_failure(self) -> None:
+        pr = MagicMock()
+        pr.create_review_request.side_effect = GithubException(
+            422, {"message": "Reviews may only be requested from collaborators"},
+            headers={},
+        )
+        github = self._make_github(pr)
+        progress = MagicMock()
+        apply_review_result(
+            github,
+            context=self._make_context(),
+            run=MagicMock(),
+            result={
+                "verdict": "APPROVE",
+                "summary": "Looks good",
+                "comments": [],
+                "recommended_reviewers": ["warpdotdev/oss-maintainers"],
+            },
+            progress=progress,
+        )
+        progress.complete.assert_called_once()
+        message = progress.complete.call_args[0][0]
+        self.assertNotIn("oss-maintainers", message)
+        self.assertIn("completed the review", message)
+        self.assertIn("no human review was requested", message)
+        self.assertNotIn("posted feedback", message)
+
+    def test_progress_comment_mentions_reviewers_on_success(self) -> None:
+        pr = MagicMock()
+        github = self._make_github(pr)
+        progress = MagicMock()
+        apply_review_result(
+            github,
+            context=self._make_context(),
+            run=MagicMock(),
+            result={
+                "verdict": "APPROVE",
+                "summary": "Looks good",
+                "comments": [],
+                "recommended_reviewers": ["warpdotdev/oss-maintainers"],
+            },
+            progress=progress,
+        )
+        progress.complete.assert_called_once()
+        message = progress.complete.call_args[0][0]
+        self.assertIn("oss-maintainers", message)
+        self.assertIn("requested human review", message)
 
 
 if __name__ == "__main__":
