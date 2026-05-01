@@ -290,6 +290,13 @@ def _route_issues(payload: dict[str, Any]) -> RouteDecision:
                 None,
                 f"issues.assigned for non-oz-agent assignee {assignee_login!r}",
             )
+        sender = payload.get("sender")
+        sender_login = _login(sender)
+        if sender_login == OZ_AGENT_LOGIN or _is_bot(sender):
+            return RouteDecision(
+                None,
+                "oz-agent self-assignment event from automation user",
+            )
         labels = _label_names(issue.get("labels"))
         if READY_TO_IMPLEMENT_LABEL in labels:
             return RouteDecision(
