@@ -383,7 +383,7 @@ def _format_non_member_review_section(
         Non-Member Reviewer Selection:
         - The PR author (@{pr_author_login or 'unknown'}) is not a repository member or collaborator, so the workflow should request exactly one human reviewer when your `verdict` is `"APPROVE"`.
         - If your `verdict` is `"REJECT"`, the workflow will post a GitHub `REQUEST_CHANGES` review and will not request a human reviewer.
-        - Return a `recommended_reviewers` field alongside `verdict`, `summary`, and `comments`.
+        - Return a `recommended_reviewers` field alongside `verdict`, `body`, and `comments`.
         - `recommended_reviewers` must be a JSON list with exactly one bare GitHub login string, for example: {{"recommended_reviewers": ["octocat"]}}.
         - Choose that single reviewer from `.github/STAKEHOLDERS` by matching the changed file paths against the STAKEHOLDERS rules. Later rules override earlier rules, and more specific matching rules should be preferred over catch-all rules.
         - Strip any leading `@` from the login and exclude the PR author (@{pr_author_login or 'unknown'}); GitHub rejects self-review requests.
@@ -729,7 +729,7 @@ def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
         - {context['supplemental_skill_line']}
         - You are running in a cloud environment dispatched by the Vercel control plane. The PR description, annotated diff, and (when available) spec context are inlined below — read them directly instead of fetching anything from GitHub or running the spec-context helper.
         - Do not run `git fetch`, `git checkout`, `gh`, ad-hoc GitHub API calls, or the spec-context helper from this run. The control plane already gathered the GitHub-backed context and this run does not receive `GH_TOKEN`.
-        - Only include comments for files and lines that exist in the inlined PR diff. Every inline comment must map to an explicit `[NEW:n]`, `[OLD:n]`, or `[OLD:n,NEW:m]` annotation from the inlined diff. If feedback does not map to a diff file or commentable diff line, put it in `summary` instead of `comments`.
+        - Only include comments for files and lines that exist in the inlined PR diff. Every inline comment must map to an explicit `[NEW:n]`, `[OLD:n]`, or `[OLD:n,NEW:m]` annotation from the inlined diff. If feedback does not map to a diff file or commentable diff line, put it in top-level `body` instead of `comments`.
         - Before validating, write the inlined PR diff exactly to `pr_diff.txt` so the bundled `validate_review_json.py` script can compare `review.json` against the same annotated diff you reviewed.
         - Run `python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff pr_diff.txt` after creating `review.json`, or locate the bundled `validate_review_json.py` under the packaged `review-pr` skill directory and run that copy. Fix every reported error before upload.
         - Do not post the final review directly.
@@ -815,7 +815,7 @@ def apply_review_result(
             requester_login=requester,
         )
     pr = github.get_pull(pr_number)
-    summary, comments = _normalize_review_payload(
+    body, comments = _normalize_review_payload(
         result, diff_line_map, diff_content_map
     )
     verdict = _parse_verdict(result)
@@ -846,10 +846,10 @@ def apply_review_result(
     # The empty-feedback short-circuit applies when there is no feedback
     # and no reviewer to ping.
     # A non-member REJECT must still post a ``REQUEST_CHANGES`` review
-    # even when the agent did not produce a summary or inline comments so
+    # even when the agent did not produce a body or inline comments so
     # the rejection action lands on GitHub.
     if (
-        not summary
+        not body
         and not comments
         and event != "REQUEST_CHANGES"
         and not recommended_reviewers
@@ -860,9 +860,9 @@ def apply_review_result(
             )
         )
         return
-    if summary or comments or event == "REQUEST_CHANGES":
+    if body or comments or event == "REQUEST_CHANGES":
         review_body = (
-            f"{summary or 'Automated review'}\n\n{RETRIGGER_HINT}\n\n{POWERED_BY_SUFFIX}"
+            f"{body or 'Automated review'}\n\n{RETRIGGER_HINT}\n\n{POWERED_BY_SUFFIX}"
         )
         if comments:
             pr.create_review(body=review_body, event=event, comments=comments)

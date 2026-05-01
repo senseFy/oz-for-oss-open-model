@@ -43,7 +43,7 @@ class ReviewValidationTest(unittest.TestCase):
         )
         result = validate_review_payload(
             {
-                "summary": "ok",
+                "body": "ok",
                 "comments": [
                     {
                         "path": "src/example.py",
@@ -58,6 +58,64 @@ class ReviewValidationTest(unittest.TestCase):
         )
         self.assertEqual(result.errors, [])
         self.assertEqual(len(result.comments), 1)
+        self.assertEqual(result.body, "ok")
+
+    def test_accepts_github_shaped_multiline_comments_with_start_side(self) -> None:
+        diff_line_map, diff_content_map = build_diff_maps_from_annotated_diff(
+            ANNOTATED_DIFF
+        )
+        result = validate_review_payload(
+            {
+                "body": "ok",
+                "comments": [
+                    {
+                        "path": "src/example.py",
+                        "start_line": 2,
+                        "start_side": "RIGHT",
+                        "line": 3,
+                        "side": "RIGHT",
+                        "body": "💡 [SUGGESTION] Combine these lines.",
+                    }
+                ],
+            },
+            diff_line_map,
+            diff_content_map,
+        )
+        self.assertEqual(result.errors, [])
+        self.assertEqual(
+            result.comments[0],
+            {
+                "path": "src/example.py",
+                "start_line": 2,
+                "start_side": "RIGHT",
+                "line": 3,
+                "side": "RIGHT",
+                "body": "💡 [SUGGESTION] Combine these lines.",
+            },
+        )
+
+    def test_requires_start_side_for_multiline_comments(self) -> None:
+        diff_line_map, diff_content_map = build_diff_maps_from_annotated_diff(
+            ANNOTATED_DIFF
+        )
+        result = validate_review_payload(
+            {
+                "body": "ok",
+                "comments": [
+                    {
+                        "path": "src/example.py",
+                        "start_line": 2,
+                        "line": 3,
+                        "side": "RIGHT",
+                        "body": "💡 [SUGGESTION] Combine these lines.",
+                    }
+                ],
+            },
+            diff_line_map,
+            diff_content_map,
+        )
+        self.assertEqual(len(result.errors), 1)
+        self.assertIn("missing `start_side`", result.errors[0])
 
     def test_rejects_comments_for_lines_not_in_annotated_diff(self) -> None:
         diff_line_map, diff_content_map = build_diff_maps_from_annotated_diff(
@@ -149,7 +207,7 @@ class ReviewValidationTest(unittest.TestCase):
                 json.dumps(
                     {
                         "verdict": "REJECT",
-                        "summary": "bad",
+                        "body": "bad",
                         "comments": [
                             {
                                 "path": "src/example.py",

@@ -47,7 +47,7 @@ The diff file uses these prefixes:
 - `[NEW:n]` for added lines on the new side. Use `"RIGHT"`.
 - `[OLD:n,NEW:m]` for unchanged context. Use `"RIGHT"` with line `m`.
 
-Treat these annotations as the only source of truth for inline comment locations. For every inline comment you emit, first identify the exact annotated line in `pr_diff.txt` (or the inlined PR diff) and copy its path, side, and line number into `review.json`. Do not infer line numbers from prose, rendered GitHub views, file lengths, surrounding spec text, or unannotated snippets. If you cannot point to a specific `[NEW:n]`, `[OLD:n]`, or `[OLD:n,NEW:m]` line in the annotated diff, put the feedback in `summary` instead of `comments`.
+Treat these annotations as the only source of truth for inline comment locations. For every inline comment you emit, first identify the exact annotated line in `pr_diff.txt` (or the inlined PR diff) and copy its path, side, and line number into `review.json`. Do not infer line numbers from prose, rendered GitHub views, file lengths, surrounding spec text, or unannotated snippets. If you cannot point to a specific `[NEW:n]`, `[OLD:n]`, or `[OLD:n,NEW:m]` line in the annotated diff, put the feedback in top-level `body` instead of `comments`.
 
 ## Comment Requirements
 
@@ -66,8 +66,8 @@ Write comments with these constraints:
 - Keep ranges to at most 10 lines.
 - Restrict inline comments to lines that appear explicitly in the annotated PR diff.
 - Only create file-level or inline comments for files that exist in this PR's diff.
-- If the relevant file or line is not part of the diff, put the feedback in `summary` instead of `comments`.
-- Before adding each comment object, verify that its `path`, `side`, `line`, and optional `start_line` correspond to real annotations in the same file's diff section.
+- If the relevant file or line is not part of the diff, put the feedback in top-level `body` instead of `comments`.
+- Before adding each comment object, verify that its `path`, `side`, `line`, and optional `start_line`/`start_side` correspond to real annotations in the same file's diff section.
 
 ## Suggestion Blocks
 
@@ -81,7 +81,7 @@ Rules:
 
 - Match the exact indentation of the original file.
 - Include only replacement text.
-- For multi-line suggestions, set `start_line` to the first line and `line` to the last line.
+- For multi-line suggestions, set `start_line` and `start_side` to the first line, and `line` and `side` to the last line.
 
 ## Output Format
 
@@ -90,13 +90,14 @@ Create `review.json` with this shape:
 ```json
 {
   "verdict": "REJECT",
-  "summary": "## Overview\n...\n\n## Concerns\n- ...\n\n## Verdict\nFound: 1 critical, 2 important, 3 suggestions\n\n**Request changes**",
+  "body": "## Overview\n...\n\n## Concerns\n- ...\n\n## Verdict\nFound: 1 critical, 2 important, 3 suggestions\n\n**Request changes**",
   "comments": [
     {
       "path": "path/to/file",
       "line": 42,
       "side": "RIGHT",
       "start_line": 40,
+      "start_side": "RIGHT",
       "body": "⚠️ [IMPORTANT] Short explanation\n\n```suggestion\nreplacement\n```"
     }
   ]
@@ -105,15 +106,16 @@ Create `review.json` with this shape:
 
 Field rules:
 
-- `verdict` is required and must be exactly the string `"APPROVE"` or `"REJECT"` (uppercase). Map your final recommendation as: `Approve` or `Approve with nits` → `"APPROVE"`; `Request changes` → `"REJECT"`. The `verdict` and the human-readable recommendation in `summary` must agree.
+- `verdict` is required and must be exactly the string `"APPROVE"` or `"REJECT"` (uppercase). Map your final recommendation as: `Approve` or `Approve with nits` → `"APPROVE"`; `Request changes` → `"REJECT"`. The `verdict` and the human-readable recommendation in top-level `body` must agree.
+- top-level `body` is the GitHub review body and is required. Use `body`, not `summary`, for the review overview and final recommendation.
 - `path` must be relative to the repository root.
 - `line` is required and must target the correct side.
-- `start_line` is optional and only for multi-line ranges.
+- `start_line` is optional and only for multi-line ranges. When `start_line` is present, `start_side` is required and must be `"LEFT"` or `"RIGHT"`.
 - `side` must be `"LEFT"` or `"RIGHT"`.
 
-## Summary Requirements
+## Body Requirements
 
-The `summary` must include:
+The top-level `body` must include:
 
 - A high-level overview of the spec PR.
 - Concerns about completeness, clarity, feasibility, or issue alignment.

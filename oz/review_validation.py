@@ -19,14 +19,18 @@ class ReviewComment(TypedDict, total=False):
 @dataclass(frozen=True)
 class ReviewValidationResult:
     """Validated ``review.json`` fields plus any dropped-comment errors."""
-
-    summary: str
+    body: str
     comments: list[ReviewComment]
     errors: list[str]
 
     @property
     def is_valid(self) -> bool:
         return not self.errors
+
+    @property
+    def summary(self) -> str:
+        """Backward-compatible alias for older callers."""
+        return self.body
 
 
 HUNK_HEADER_PATTERN = re.compile(
@@ -258,17 +262,19 @@ def _validate_suggestion_blocks(
 
     path = comment.get("path") or ""
     side = comment.get("side") or "RIGHT"
+    start_side = comment.get("start_side") or side
     line_no = comment.get("line")
     if not isinstance(line_no, int):
         return errors
     start_line = comment.get("start_line") or line_no
-    content_for_side = diff_content_map.get(path, {}).get(side, {})
+    content_for_start_side = diff_content_map.get(path, {}).get(start_side, {})
+    content_for_end_side = diff_content_map.get(path, {}).get(side, {})
 
     for block_index, block_lines in enumerate(blocks):
         if not block_lines or block_lines == [""]:
             continue
-        prev_context = content_for_side.get(start_line - 1)
-        next_context = content_for_side.get(line_no + 1)
+        prev_context = content_for_start_side.get(start_line - 1)
+        next_context = content_for_end_side.get(line_no + 1)
         first_line = block_lines[0]
         last_line = block_lines[-1]
         if prev_context is not None and first_line == prev_context:
@@ -293,9 +299,11 @@ def validate_review_payload(
     if not isinstance(review, dict):
         raise ValueError("Review payload must be a JSON object.")
 
-    summary = review.get("summary") or ""
-    if not isinstance(summary, str):
-        raise ValueError("Review payload `summary` must be a string.")
+    raw_body = review.get("body")
+    if raw_body is None:
+        raw_body = review.get("summary") or ""
+    if not isinstance(raw_body, str):
+        raise ValueError("Review payload `body` must be a string.")
 
     raw_comments = review.get("comments") or []
     if not isinstance(raw_comments, list):
@@ -311,24 +319,26 @@ def validate_review_payload(
 
         path = normalize_review_path(raw_comment.get("path"))
         line = raw_comment.get("line")
-        body = str(raw_comment.get("body") or "").strip()
-        side = (
-            raw_comment.get("side")
-            if raw_comment.get("side") in {"LEFT", "RIGHT"}
-            else "RIGHT"
-        )
+        body_value = raw_comment.get("body")
+        body = body_value.strip() if isinstance(body_value, str) else ""
+        side = raw_comment.get("side")
 
         if not path:
             errors.append(f"`comments[{index}]` is missing `path`.")
             continue
         if path not in diff_line_map:
             errors.append(
-                f"`comments[{index}]` references `{path}`, which is not part of the PR diff. Move that feedback to `summary` instead."
+                f"`comments[{index}]` references `{path}`, which is not part of the PR diff. Move that feedback to top-level `body` instead."
             )
             continue
         if not isinstance(line, int) or line <= 0:
             errors.append(
                 f"`comments[{index}]` for `{path}` must include a positive integer `line`."
+            )
+            continue
+        if side not in {"LEFT", "RIGHT"}:
+            errors.append(
+                f"`comments[{index}]` for `{path}:{line}` must include `side` set to `LEFT` or `RIGHT`."
             )
             continue
         if not body:
@@ -351,18 +361,34 @@ def validate_review_payload(
 
         if "start_line" in raw_comment and raw_comment.get("start_line") is not None:
             start_line = raw_comment.get("start_line")
-            if not isinstance(start_line, int) or start_line <= 0 or start_line >= line:
+            if not isinstance(start_line, int) or start_line <= 0:
                 errors.append(
-                    f"`comments[{index}]` for `{path}` has invalid `start_line`; it must be a positive integer smaller than `line`."
+                    f"`comments[{index}]` for `{path}` has invalid `start_line`; it must be a positive integer."
                 )
                 continue
-            if start_line not in allowed_lines:
+            start_side = raw_comment.get("start_side")
+            if start_side not in {"LEFT", "RIGHT"}:
                 errors.append(
-                    f"`comments[{index}]` references `{path}:{start_line}` on `{side}` as `start_line`, which is not commentable in the PR diff."
+                    f"`comments[{index}]` for `{path}` has `start_line` but is missing `start_side`; set `start_side` to `LEFT` or `RIGHT`."
+                )
+                continue
+            if start_side == side and start_line >= line:
+                errors.append(
+                    f"`comments[{index}]` for `{path}` has invalid `start_line`; when `start_side` matches `side`, it must be smaller than `line`."
+                )
+                continue
+            if start_line not in diff_line_map[path][start_side]:
+                errors.append(
+                    f"`comments[{index}]` references `{path}:{start_line}` on `{start_side}` as `start_line`, which is not commentable in the PR diff."
                 )
                 continue
             normalized_comment["start_line"] = start_line
-            normalized_comment["start_side"] = side
+            normalized_comment["start_side"] = start_side
+        elif raw_comment.get("start_side") is not None:
+            errors.append(
+                f"`comments[{index}]` for `{path}:{line}` has `start_side` without `start_line`."
+            )
+            continue
 
         if diff_content_map is not None:
             suggestion_errors = _validate_suggestion_blocks(
@@ -378,7 +404,7 @@ def validate_review_payload(
         normalized_comments.append(normalized_comment)
 
     return ReviewValidationResult(
-        summary=summary.strip(),
+        body=raw_body.strip(),
         comments=normalized_comments,
         errors=errors,
     )
@@ -393,4 +419,4 @@ def normalize_review_payload(
     result = validate_review_payload(review, diff_line_map, diff_content_map)
     for err in result.errors:
         print(f"[review-validation] Dropped comment: {err}")
-    return result.summary, result.comments
+    return result.body, result.comments
