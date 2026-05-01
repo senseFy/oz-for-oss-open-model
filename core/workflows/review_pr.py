@@ -607,6 +607,30 @@ def _format_non_member_review_section(
     ).strip()
 
 
+def _format_spec_reviewer_section(
+    *,
+    pr_author_login: str,
+    stakeholders_block: str,
+) -> str:
+    return dedent(
+        f"""
+        Spec PR Reviewer Selection:
+        - This PR only modifies files under `specs/`. After completing your review, request exactly one human reviewer from `.github/STAKEHOLDERS` when your `verdict` is `"APPROVE"`.
+        - If your `verdict` is `"REJECT"`, the workflow will post feedback but will not request a human reviewer.
+        - Return a `recommended_reviewers` field alongside `verdict`, `summary`, and `comments`.
+        - `recommended_reviewers` must be a JSON list with exactly one bare GitHub login string, for example: {{"recommended_reviewers": ["octocat"]}}.
+        - To select the reviewer, read the spec content and identify which source files, directories, or subsystems are mentioned as being changed or affected (e.g. in "Relevant code" or "Proposed changes" sections of a tech spec). Match those code paths against the STAKEHOLDERS rules. Later rules override earlier rules, and more specific matching rules should be preferred over catch-all rules.
+        - Strip any leading `@` from the login and exclude the PR author (@{pr_author_login or 'unknown'}); GitHub rejects self-review requests.
+        - Do not return more than one reviewer, and do not return multiple candidates for the workflow to choose from.
+        - If you genuinely cannot identify one matching eligible stakeholder from the spec content, set `recommended_reviewers` to an empty list. The workflow will deterministically choose a fallback reviewer from `.github/STAKEHOLDERS`; do not invent or copy unrelated logins to satisfy the field.
+        - Do not call GitHub yourself to post the review or request reviewers.
+
+        Stakeholders (from `.github/STAKEHOLDERS`):
+        {stakeholders_block}
+        """
+    ).strip()
+
+
 def _format_pr_description(
     *,
     pr_number: int,
@@ -719,6 +743,7 @@ class ReviewContext(TypedDict):
     supplemental_skill_line: str
     repo_local_section: str
     non_member_review_section: str
+    spec_reviewer_section: str
     pr_description_text: str
     pr_diff_text: str
     spec_context_text: str
@@ -877,6 +902,7 @@ def gather_review_context(
         getattr(getattr(pr, "user", None), "login", "") or ""
     )
     non_member_review_section = ""
+    spec_reviewer_section = ""
     stakeholders_entries: list[dict[str, Any]] = []
     if is_non_member:
         # Load ``.github/STAKEHOLDERS`` directly from the repository
@@ -887,6 +913,18 @@ def gather_review_context(
         stakeholders_entries = load_stakeholders_from_repo(github)
         stakeholders_block = format_stakeholders_for_prompt(stakeholders_entries)
         non_member_review_section = _format_non_member_review_section(
+            pr_author_login=pr_author_login,
+            stakeholders_block=stakeholders_block,
+        )
+    elif spec_only:
+        # Load ``.github/STAKEHOLDERS`` so the agent can match the code
+        # paths mentioned in the spec against the stakeholder roster and
+        # recommend a human reviewer. The agent uses spec content (e.g.
+        # "Relevant code" sections) rather than the PR diff paths, because
+        # spec PRs only touch files under ``specs/``.
+        stakeholders_entries = load_stakeholders_from_repo(github)
+        stakeholders_block = format_stakeholders_for_prompt(stakeholders_entries)
+        spec_reviewer_section = _format_spec_reviewer_section(
             pr_author_login=pr_author_login,
             stakeholders_block=stakeholders_block,
         )
@@ -928,6 +966,7 @@ def gather_review_context(
         supplemental_skill_line=supplemental_skill_line,
         repo_local_section=repo_local_section,
         non_member_review_section=non_member_review_section,
+        spec_reviewer_section=spec_reviewer_section,
         pr_description_text=pr_description_text,
         pr_diff_text=pr_diff_text,
         spec_context_text=spec_context_text,
@@ -1006,6 +1045,9 @@ def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
     non_member_section = str(context.get("non_member_review_section") or "").rstrip()
     if non_member_section:
         prompt = prompt + "\n\n" + non_member_section
+    spec_reviewer_section = str(context.get("spec_reviewer_section") or "").rstrip()
+    if spec_reviewer_section:
+        prompt = prompt + "\n\n" + spec_reviewer_section
     return prompt
 
 
@@ -1076,7 +1118,8 @@ def apply_review_result(
         if is_non_member and verdict == _VERDICT_REJECT
         else "COMMENT"
     )
-    if is_non_member and verdict == _VERDICT_APPROVE:
+    spec_only = bool(context.get("spec_only"))
+    if (is_non_member or spec_only) and verdict == _VERDICT_APPROVE:
         recommended_reviewers = _resolve_recommended_reviewers(
             result,
             stakeholder_entries=stakeholder_entries,

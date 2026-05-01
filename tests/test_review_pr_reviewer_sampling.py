@@ -10,6 +10,7 @@ from . import conftest  # noqa: F401
 from workflows.review_pr import (  # type: ignore[import-not-found]
     _deterministic_reviewer_from_stakeholders,
     _format_non_member_review_section,
+    _format_spec_reviewer_section,
     _format_review_completion_message,
     _parse_verdict,
     _resolve_recommended_reviewers,
@@ -194,16 +195,43 @@ class ParseVerdictTest(unittest.TestCase):
         self.assertEqual(_parse_verdict({"verdict": None}), "APPROVE")
 
 
+class SpecReviewerSectionTest(unittest.TestCase):
+    def test_prompt_includes_spec_content_guidance(self) -> None:
+        prompt = _format_spec_reviewer_section(
+            pr_author_login="contributor",
+            stakeholders_block="- /core/ → @core-owner",
+        )
+        self.assertIn("specs/", prompt)
+        self.assertIn("Relevant code", prompt)
+        self.assertIn("exactly one bare GitHub login", prompt)
+        self.assertIn("Do not return more than one reviewer", prompt)
+
+    def test_prompt_gates_reviewer_request_on_approve_verdict(self) -> None:
+        prompt = _format_spec_reviewer_section(
+            pr_author_login="contributor",
+            stakeholders_block="- /core/ → @core-owner",
+        )
+        self.assertIn("`verdict` is `\"APPROVE\"`", prompt)
+
+    def test_prompt_excludes_pr_author(self) -> None:
+        prompt = _format_spec_reviewer_section(
+            pr_author_login="alice",
+            stakeholders_block="- /core/ → @core-owner",
+        )
+        self.assertIn("@alice", prompt)
+
+
 class ApplyReviewResultVerdictTest(unittest.TestCase):
     """Verify ``apply_review_result`` honors the agent-supplied verdict."""
 
-    def _make_context(self, *, is_non_member: bool) -> dict:
+    def _make_context(self, *, is_non_member: bool, spec_only: bool = False) -> dict:
         return {
             "owner": "acme",
             "repo": "widgets",
             "pr_number": 7,
             "requester": "alice",
             "is_non_member": is_non_member,
+            "spec_only": spec_only,
             "pr_author_login": "contributor",
             "stakeholder_entries": STAKEHOLDERS,
             "stakeholder_logins": ["api-owner", "docs-owner", "fallback", "python-owner"],
@@ -432,6 +460,89 @@ class ApplyReviewResultVerdictTest(unittest.TestCase):
             approve_pr.create_review.call_args.kwargs["body"],
             reject_pr.create_review.call_args.kwargs["body"],
         )
+
+
+    def test_approve_spec_pr_requests_reviewer(self) -> None:
+        pr = MagicMock()
+        github = self._make_github(pr)
+        progress = MagicMock()
+        apply_review_result(
+            github,
+            context=self._make_context(is_non_member=False, spec_only=True),
+            run=MagicMock(),
+            result={
+                "verdict": "APPROVE",
+                "summary": "Spec looks good",
+                "comments": [],
+                "recommended_reviewers": ["api-owner"],
+            },
+            progress=progress,
+        )
+        pr.create_review.assert_called_once()
+        self.assertEqual(pr.create_review.call_args.kwargs["event"], "COMMENT")
+        pr.create_review_request.assert_called_once_with(reviewers=["api-owner"])
+
+    def test_reject_spec_pr_does_not_request_reviewer(self) -> None:
+        pr = MagicMock()
+        github = self._make_github(pr)
+        progress = MagicMock()
+        apply_review_result(
+            github,
+            context=self._make_context(is_non_member=False, spec_only=True),
+            run=MagicMock(),
+            result={
+                "verdict": "REJECT",
+                "summary": "Spec needs work",
+                "comments": [],
+                "recommended_reviewers": ["api-owner"],
+            },
+            progress=progress,
+        )
+        # Spec PRs use COMMENT (not REQUEST_CHANGES) even on REJECT
+        pr.create_review.assert_called_once()
+        self.assertEqual(pr.create_review.call_args.kwargs["event"], "COMMENT")
+        pr.create_review_request.assert_not_called()
+
+    def test_approve_spec_pr_with_no_feedback_still_requests_reviewer(self) -> None:
+        """A spec PR APPROVE with no summary/comments should still request a reviewer."""
+        pr = MagicMock()
+        github = self._make_github(pr)
+        progress = MagicMock()
+        apply_review_result(
+            github,
+            context=self._make_context(is_non_member=False, spec_only=True),
+            run=MagicMock(),
+            result={
+                "verdict": "APPROVE",
+                "summary": "",
+                "comments": [],
+                "recommended_reviewers": ["api-owner"],
+            },
+            progress=progress,
+        )
+        # No review body posted (no summary or comments), but reviewer IS requested
+        pr.create_review.assert_not_called()
+        pr.create_review_request.assert_called_once_with(reviewers=["api-owner"])
+
+    def test_approve_spec_pr_falls_back_to_deterministic_reviewer(self) -> None:
+        """When agent provides no recommended_reviewers, fall back to STAKEHOLDERS."""
+        pr = MagicMock()
+        github = self._make_github(pr)
+        progress = MagicMock()
+        apply_review_result(
+            github,
+            context=self._make_context(is_non_member=False, spec_only=True),
+            run=MagicMock(),
+            result={
+                "verdict": "APPROVE",
+                "summary": "Spec looks good",
+                "comments": [],
+                "recommended_reviewers": [],
+            },
+            progress=progress,
+        )
+        # Falls back to first eligible owner from STAKEHOLDERS ("fallback")
+        pr.create_review_request.assert_called_once_with(reviewers=["fallback"])
 
 
 if __name__ == "__main__":
