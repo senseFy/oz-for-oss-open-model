@@ -176,6 +176,15 @@ class FormatReviewCompletionMessageTest(unittest.TestCase):
     def test_plain_comment_no_reviewers(self) -> None:
         message = _format_review_completion_message("COMMENT", [])
         self.assertIn("completed the review", message)
+        self.assertIn("no human review was requested", message)
+        self.assertNotIn("posted feedback", message)
+        self.assertNotIn("approved", message.lower())
+
+    def test_plain_comment_null_reviewers(self) -> None:
+        message = _format_review_completion_message("COMMENT", None)
+        self.assertIn("completed the review", message)
+        self.assertIn("no human review was requested", message)
+        self.assertNotIn("posted feedback", message)
         self.assertNotIn("approved", message.lower())
 
 
@@ -573,6 +582,8 @@ class ApplyReviewResultTeamReviewerTest(unittest.TestCase):
         message = progress.complete.call_args[0][0]
         self.assertNotIn("oss-maintainers", message)
         self.assertIn("completed the review", message)
+        self.assertIn("no human review was requested", message)
+        self.assertNotIn("posted feedback", message)
 
     def test_progress_comment_mentions_reviewers_on_success(self) -> None:
         pr = MagicMock()

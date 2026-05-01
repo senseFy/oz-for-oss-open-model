@@ -554,9 +554,9 @@ def _with_retrigger_hint(message: str) -> str:
 
 def _format_review_completion_message(
     event: str,
-    recommended_reviewers: list[str],
+    recommended_reviewers: list[str] | None,
 ) -> str:
-    """Build the progress-comment completion message for a posted review."""
+    """Build the progress-comment completion message after review application."""
     if recommended_reviewers:
         mentions = ", ".join(f"@{login}" for login in recommended_reviewers)
         base = (
@@ -564,7 +564,10 @@ def _format_review_completion_message(
             f"{mentions}."
         )
     else:
-        base = "I completed the review and posted feedback on this pull request."
+        base = (
+            "I completed the review and no human review was requested for "
+            "this pull request."
+        )
     return _with_retrigger_hint(base)
 
 
