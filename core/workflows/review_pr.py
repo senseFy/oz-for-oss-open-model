@@ -131,6 +131,46 @@ def _stakeholder_logins(entries: list[dict[str, Any]]) -> set[str]:
     return logins
 
 
+def _is_team_slug(login: str) -> bool:
+    """Return True when *login* looks like an ``org/team`` team slug.
+
+    GitHub user logins never contain ``/``, so any entry of the form
+    ``warpdotdev/oss-maintainers`` (with or without a leading ``@``)
+    is a team reference that must be routed through the
+    ``team_reviewers`` API parameter instead of ``reviewers``.
+    """
+    return "/" in login
+
+
+def _team_slug_only(team_ref: str) -> str:
+    """Strip the ``org/`` prefix from a team reference.
+
+    GitHub's review-request API expects plain team slugs (e.g.
+    ``oss-maintainers``) in ``team_reviewers``, not the full
+    ``org/slug`` form used in CODEOWNERS / STAKEHOLDERS files.
+    """
+    return team_ref.split("/", 1)[-1]
+
+
+def _split_reviewers(
+    reviewers: list[str],
+) -> tuple[list[str], list[str]]:
+    """Partition *reviewers* into ``(user_logins, team_slugs)``.
+
+    Team entries are identified by the presence of ``/`` in the string
+    and returned with the ``org/`` prefix stripped so they can be passed
+    directly to GitHub's ``team_reviewers`` parameter.
+    """
+    users: list[str] = []
+    teams: list[str] = []
+    for reviewer in reviewers:
+        if _is_team_slug(reviewer):
+            teams.append(_team_slug_only(reviewer))
+        else:
+            users.append(reviewer)
+    return users, teams
+
+
 def _normalize_reviewer_login(
     candidate: Any,
     *,
@@ -1116,15 +1156,24 @@ def apply_review_result(
             pr.create_review(body=review_body, event=event, comments=comments)
         else:
             pr.create_review(body=review_body, event=event)
+    actually_requested: list[str] = []
     if recommended_reviewers:
-        try:
-            pr.create_review_request(reviewers=recommended_reviewers)
-        except GithubException:
-            logger.exception(
-                "Failed to request reviewers %s for PR #%s in %s/%s",
-                recommended_reviewers,
-                pr_number,
-                owner,
-                repo,
-            )
-    progress.complete(_format_review_completion_message(event, recommended_reviewers))
+        user_reviewers, team_reviewers = _split_reviewers(recommended_reviewers)
+        request_kwargs: dict[str, list[str]] = {}
+        if user_reviewers:
+            request_kwargs["reviewers"] = user_reviewers
+        if team_reviewers:
+            request_kwargs["team_reviewers"] = team_reviewers
+        if request_kwargs:
+            try:
+                pr.create_review_request(**request_kwargs)
+                actually_requested = recommended_reviewers
+            except GithubException:
+                logger.exception(
+                    "Failed to request reviewers %s for PR #%s in %s/%s",
+                    recommended_reviewers,
+                    pr_number,
+                    owner,
+                    repo,
+                )
+    progress.complete(_format_review_completion_message(event, actually_requested))
