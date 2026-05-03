@@ -132,6 +132,55 @@ class PrCommentContextBranchSafetyTest(unittest.TestCase):
         self.assertTrue(context["head_branch_exists_in_base"])
         self.assertFalse(context["can_push_to_head_branch"])
 
+    def test_context_carries_requester_is_org_member(self) -> None:
+        github = MagicMock()
+        github.get_git_ref.return_value = object()
+        pr = self._pr(head_repo="contributor/widgets", base_repo="acme/widgets")
+
+        with patch(
+            "workflows.respond_to_pr_comment.resolve_spec_context_for_pr_via_api",
+            return_value={"spec_entries": []},
+        ):
+            context = gather_pr_comment_context(
+                github,
+                owner="acme",
+                repo="widgets",
+                pr_number=12,
+                trigger_kind="conversation",
+                trigger_comment_id=99,
+                requester="alice",
+                event={},
+                pr=pr,
+                requester_is_org_member=True,
+            )
+
+        self.assertTrue(context["is_cross_repository"])
+        self.assertFalse(context["can_push_to_head_branch"])
+        self.assertTrue(context["requester_is_org_member"])
+
+    def test_context_defaults_requester_is_org_member_to_false(self) -> None:
+        github = MagicMock()
+        github.get_git_ref.return_value = object()
+        pr = self._pr(head_repo="acme/widgets", base_repo="acme/widgets")
+
+        with patch(
+            "workflows.respond_to_pr_comment.resolve_spec_context_for_pr_via_api",
+            return_value={"spec_entries": []},
+        ):
+            context = gather_pr_comment_context(
+                github,
+                owner="acme",
+                repo="widgets",
+                pr_number=12,
+                trigger_kind="conversation",
+                trigger_comment_id=99,
+                requester="alice",
+                event={},
+                pr=pr,
+            )
+
+        self.assertFalse(context["requester_is_org_member"])
+
     def test_context_blocks_push_when_branch_would_be_created(self) -> None:
         github = MagicMock()
         github.get_git_ref.side_effect = UnknownObjectException(404, {}, {})

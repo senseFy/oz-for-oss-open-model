@@ -54,6 +54,7 @@ class PrCommentContext(TypedDict):
     has_spec_context: bool
     spec_context_text: str
     coauthor_line: str
+    requester_is_org_member: bool
     coauthor_directives: str
     progress_start_line: str
 
@@ -72,6 +73,7 @@ def gather_pr_comment_context(
     workspace_path: Any = None,
     client: Github | None = None,
     pr: PullRequest | None = None,
+    requester_is_org_member: bool = False,
 ) -> PrCommentContext:
     """Gather PR + spec context for a respond-to-pr-comment dispatch.
 
@@ -157,6 +159,7 @@ def gather_pr_comment_context(
         review_reply_target_id=review_reply_target_id,
         has_spec_context=has_spec_context,
         spec_context_text=spec_context_text,
+        requester_is_org_member=requester_is_org_member,
         coauthor_line=coauthor_line,
         coauthor_directives=coauthor_directives,
         progress_start_line=progress_start_line,
@@ -269,6 +272,7 @@ def apply_pr_comment_result(
     pr_number = int(context["pr_number"])
     head_branch = str(context["head_branch"])
     can_push_to_head_branch = bool(context.get("can_push_to_head_branch", True))
+    requester_is_org_member = bool(context.get("requester_is_org_member", False))
     requester = str(context.get("requester") or "")
     trigger_kind = str(context.get("trigger_kind") or "conversation")
     review_reply_target_id = int(context.get("review_reply_target_id") or 0)
@@ -296,7 +300,7 @@ def apply_pr_comment_result(
     created_at = getattr(run, "created_at", None)
     if not isinstance(created_at, datetime):
         created_at = datetime.now(timezone.utc)
-    if not can_push_to_head_branch:
+    if not can_push_to_head_branch and not requester_is_org_member:
         progress.complete(
             "I analyzed the request but did not push changes because this PR head "
             "is not allowed to publish back to the base repository."

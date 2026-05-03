@@ -381,6 +381,63 @@ class BuildRespondRequestTest(_BuilderTestBase):
         self.assertIsNone(request)
         respond_module.build_pr_comment_prompt.assert_not_called()  # type: ignore[attr-defined]
 
+    def test_allows_dispatch_for_fork_pr_when_requester_is_org_member(self) -> None:
+        from core.builders import build_respond_request
+        from core.routing import WORKFLOW_RESPOND_TO_PR_COMMENT
+
+        respond_module = sys.modules["workflows.respond_to_pr_comment"]
+        respond_module.gather_pr_comment_context.return_value = {  # type: ignore[attr-defined]
+            "owner": "acme",
+            "repo": "widgets",
+            "pr_number": 7,
+            "head_branch": "harsh_poc",
+            "head_repo_full_name": "contributor/widgets",
+            "base_branch": "main",
+            "base_repo_full_name": "acme/widgets",
+            "is_cross_repository": True,
+            "head_branch_exists_in_base": False,
+            "can_push_to_head_branch": False,
+            "pr_title": "feat: add",
+            "requester": "alice",
+            "trigger_kind": "review",
+            "trigger_comment_id": 999,
+            "review_reply_target_id": 999,
+            "has_spec_context": False,
+            "spec_context_text": "No spec context.",
+            "requester_is_org_member": True,
+            "coauthor_line": "",
+            "coauthor_directives": "- foo",
+            "progress_start_line": "I'm starting",
+        }
+        github_client = MagicMock()
+        repo = MagicMock(name="repo")
+        github_client.get_repo.return_value = repo
+        repo.get_pull.return_value = MagicMock(name="pr")
+
+        payload = {
+            "repository": {"full_name": "acme/widgets"},
+            "installation": {"id": 1},
+            "pull_request": {"number": 7},
+            "comment": {
+                "id": 999,
+                "user": {"login": "alice"},
+                "author_association": "MEMBER",
+            },
+        }
+
+        request = build_respond_request(
+            payload,
+            github_client=github_client,
+            workspace_path=Path("/tmp/ws"),
+        )
+
+        self.assertIsNotNone(request)
+        self.assertEqual(request.workflow, WORKFLOW_RESPOND_TO_PR_COMMENT)
+        respond_module.build_pr_comment_prompt.assert_called_once()  # type: ignore[attr-defined]
+        # Verify requester_is_org_member was passed to gather_pr_comment_context
+        kwargs = respond_module.gather_pr_comment_context.call_args.kwargs  # type: ignore[attr-defined]
+        self.assertTrue(kwargs["requester_is_org_member"])
+
 
 class BuildVerifyRequestTest(_BuilderTestBase):
     def setUp(self) -> None:

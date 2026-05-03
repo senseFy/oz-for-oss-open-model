@@ -21,6 +21,11 @@ from core.routing import (
 from core.state import RunState
 from core.workflow_adapters import reconstruct_progress
 
+# Author associations treated as trusted org members.  Mirrors
+# ``oz.helpers.ORG_MEMBER_ASSOCIATIONS`` but duplicated here to avoid
+# a top-level import of ``oz.helpers`` which the test harness stubs.
+_ORG_MEMBER_ASSOCIATIONS: set[str] = {"COLLABORATOR", "MEMBER", "OWNER"}
+
 
 def _resolve_owner_repo(payload: Mapping[str, Any]) -> tuple[str, str, str]:
     repo_obj = payload.get("repository") or {}
@@ -105,6 +110,26 @@ def _resolve_trigger_kind(payload: Mapping[str, Any]) -> str:
     if isinstance(payload.get("review"), dict):
         return "review_body"
     return "conversation"
+
+
+def _resolve_requester_author_association(payload: Mapping[str, Any]) -> str:
+    """Extract the ``author_association`` for the requester from the payload.
+
+    GitHub includes ``author_association`` on comment and review objects
+    in webhook payloads.  The value reflects the commenter's relationship
+    with the repository (e.g. ``MEMBER``, ``COLLABORATOR``, ``OWNER``).
+    """
+    comment = payload.get("comment")
+    if isinstance(comment, dict):
+        assoc = comment.get("author_association")
+        if isinstance(assoc, str) and assoc.strip():
+            return assoc.strip()
+    review = payload.get("review")
+    if isinstance(review, dict):
+        assoc = review.get("author_association")
+        if isinstance(assoc, str) and assoc.strip():
+            return assoc.strip()
+    return ""
 
 
 def _resolve_trigger_comment_id(payload: Mapping[str, Any]) -> int:
@@ -211,6 +236,8 @@ class RespondWorkflow(BaseWorkflow):
         repo_handle = github_client.get_repo(full_name)
         pr = repo_handle.get_pull(pr_number)
         review_reply_target = _resolve_review_reply_target(payload, pr)
+        author_association = _resolve_requester_author_association(payload)
+        requester_is_org_member = author_association.upper() in _ORG_MEMBER_ASSOCIATIONS
         context = gather_pr_comment_context(
             repo_handle,
             owner=owner,
@@ -224,8 +251,9 @@ class RespondWorkflow(BaseWorkflow):
             workspace_path=workspace_path or Path("/tmp"),
             client=github_client,
             pr=pr,
+            requester_is_org_member=requester_is_org_member,
         )
-        if context.get("can_push_to_head_branch") is False:
+        if context.get("can_push_to_head_branch") is False and not requester_is_org_member:
             return None
         return WorkflowDispatch(
             workflow=self.workflow,
