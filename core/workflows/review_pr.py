@@ -305,7 +305,7 @@ def _format_review_completion_message(
 ) -> str:
     """Build the progress-comment completion message after review application."""
     if recommended_reviewers:
-        mentions = ", ".join(f"@{login}" for login in recommended_reviewers)
+        mentions = ", ".join(f"`@{login}`" for login in recommended_reviewers)
         base = (
             "I reviewed this pull request and requested human review from: "
             f"{mentions}."
