@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import logging
-
 from datetime import datetime, timedelta, timezone
-from textwrap import dedent
+from textwrap import dedent, indent
 from typing import Any, Mapping, TypedDict
 from github import Github
 from github.GithubException import GithubException, UnknownObjectException
@@ -26,11 +25,16 @@ from oz.helpers import (
     post_resolved_review_comment_replies,
     resolve_coauthor_line,
     resolve_spec_context_for_pr_via_api,
+    split_repo_full_name,
     WorkflowProgressComment,
 )
 
 WORKFLOW_NAME = "respond-to-pr-comment"
 FETCH_CONTEXT_SCRIPT = ".agents/skills/implement-specs/scripts/fetch_github_context.py"
+BRANCH_STRATEGY_PUSH_HEAD = "push-head"
+BRANCH_STRATEGY_FALLBACK_PR_TO_FORK = "fallback-pr-to-fork"
+BRANCH_STRATEGY_BLOCKED = "blocked"
+
 logger = logging.getLogger(__name__)
 
 _TRIGGER_KIND_LABELS = {
@@ -38,6 +42,11 @@ _TRIGGER_KIND_LABELS = {
     "review_body": "PR review body",
     "conversation": "PR conversation comment",
 }
+
+
+def _fallback_pr_branch_name(pr_number: int) -> str:
+    return f"oz-agent/respond-pr-{int(pr_number)}"
+
 
 def _payload_actor(payload: Mapping[str, Any]) -> tuple[str, Any | None]:
     for key in ("comment", "review"):
@@ -132,9 +141,20 @@ class PrCommentContext(TypedDict):
     head_repo_full_name: str
     base_branch: str
     base_repo_full_name: str
+    head_repo_owner: str
+    head_repo_name: str
+    base_repo_owner: str
+    base_repo_name: str
     is_cross_repository: bool
     head_branch_exists_in_base: bool
+    maintainer_can_modify: bool
     can_push_to_head_branch: bool
+    branch_strategy: str
+    agent_push_repo_full_name: str
+    agent_push_branch: str
+    fallback_pr_base_repo_full_name: str
+    fallback_pr_base_branch: str
+    fallback_pr_head: str
     trigger_actor_is_trusted: bool
     pr_title: str
     requester: str
@@ -187,10 +207,36 @@ def gather_pr_comment_context(
         or head_repo_full_name.lower() != base_repo_full_name.lower()
     )
     head_branch_exists_in_base = branch_exists(github, owner, repo, head_branch)
+    maintainer_can_modify = bool(getattr(pr, "maintainer_can_modify", False))
     can_push_to_head_branch = (
-        not is_cross_repository
-        and head_branch_exists_in_base
+        (not is_cross_repository and head_branch_exists_in_base)
+        or (is_cross_repository and bool(head_repo_full_name) and maintainer_can_modify)
     )
+    head_repo_owner, head_repo_name = split_repo_full_name(head_repo_full_name)
+    base_repo_owner, base_repo_name = split_repo_full_name(base_repo_full_name)
+    if can_push_to_head_branch:
+        branch_strategy = BRANCH_STRATEGY_PUSH_HEAD
+        agent_push_repo_full_name = head_repo_full_name or base_repo_full_name
+        agent_push_branch = head_branch
+        fallback_pr_base_repo_full_name = ""
+        fallback_pr_base_branch = ""
+        fallback_pr_head = ""
+    elif is_cross_repository and head_repo_full_name:
+        branch_strategy = BRANCH_STRATEGY_FALLBACK_PR_TO_FORK
+        agent_push_repo_full_name = base_repo_full_name
+        agent_push_branch = _fallback_pr_branch_name(pr_number)
+        fallback_pr_base_repo_full_name = head_repo_full_name
+        fallback_pr_base_branch = head_branch
+        fallback_pr_head = (
+            f"{base_repo_owner}:{agent_push_branch}" if base_repo_owner else agent_push_branch
+        )
+    else:
+        branch_strategy = BRANCH_STRATEGY_BLOCKED
+        agent_push_repo_full_name = base_repo_full_name
+        agent_push_branch = head_branch
+        fallback_pr_base_repo_full_name = ""
+        fallback_pr_base_branch = ""
+        fallback_pr_head = ""
     trigger_actor_is_trusted = resolve_trigger_actor_trust(event, client=client)
     pr_title = str(pr.title or "")
     coauthor_line = resolve_coauthor_line(client or github, dict(event))
@@ -238,9 +284,20 @@ def gather_pr_comment_context(
         head_repo_full_name=head_repo_full_name,
         base_branch=base_branch,
         base_repo_full_name=base_repo_full_name,
+        head_repo_owner=head_repo_owner,
+        head_repo_name=head_repo_name,
+        base_repo_owner=base_repo_owner,
+        base_repo_name=base_repo_name,
         is_cross_repository=is_cross_repository,
         head_branch_exists_in_base=head_branch_exists_in_base,
+        maintainer_can_modify=maintainer_can_modify,
         can_push_to_head_branch=can_push_to_head_branch,
+        branch_strategy=branch_strategy,
+        agent_push_repo_full_name=agent_push_repo_full_name,
+        agent_push_branch=agent_push_branch,
+        fallback_pr_base_repo_full_name=fallback_pr_base_repo_full_name,
+        fallback_pr_base_branch=fallback_pr_base_branch,
+        fallback_pr_head=fallback_pr_head,
         trigger_actor_is_trusted=trigger_actor_is_trusted,
         pr_title=pr_title,
         requester=str(requester or ""),
@@ -261,6 +318,8 @@ def build_pr_comment_prompt(context: Mapping[str, Any]) -> str:
     repo = str(context["repo"])
     pr_number = int(context["pr_number"])
     head_branch = str(context["head_branch"])
+    head_repo_full_name = str(context.get("head_repo_full_name") or f"{owner}/{repo}")
+    base_repo_full_name = str(context.get("base_repo_full_name") or f"{owner}/{repo}")
     base_branch = str(context["base_branch"])
     pr_title = str(context.get("pr_title") or "")
     requester = str(context.get("requester") or "")
@@ -268,10 +327,53 @@ def build_pr_comment_prompt(context: Mapping[str, Any]) -> str:
     trigger_comment_id = int(context.get("trigger_comment_id") or 0)
     spec_context_text = str(context.get("spec_context_text") or "")
     coauthor_directives = str(context.get("coauthor_directives") or "")
+    branch_strategy = str(context.get("branch_strategy") or BRANCH_STRATEGY_PUSH_HEAD)
+    agent_push_repo_full_name = str(context.get("agent_push_repo_full_name") or head_repo_full_name)
+    agent_push_branch = str(context.get("agent_push_branch") or head_branch)
+    fallback_pr_base_repo_full_name = str(context.get("fallback_pr_base_repo_full_name") or "")
+    fallback_pr_base_branch = str(context.get("fallback_pr_base_branch") or "")
+    fallback_pr_head = str(context.get("fallback_pr_head") or "")
     trigger_kind_label = _TRIGGER_KIND_LABELS.get(trigger_kind, "PR conversation comment")
+
+    if branch_strategy == BRANCH_STRATEGY_FALLBACK_PR_TO_FORK:
+        branch_instructions = dedent(
+            f"""\
+            - This PR comes from fork `{head_repo_full_name}` and maintainers cannot modify the fork head branch.
+            - Do not push to `{head_repo_full_name}:{head_branch}`.
+            - Create or reuse branch `{agent_push_branch}` in base repository `{agent_push_repo_full_name}`.
+            - Before applying changes, fetch `{head_repo_full_name}:{head_branch}` and make sure `{agent_push_branch}` starts from that fork head commit rather than from the base repository default branch.
+            - Commit any changes to `{agent_push_branch}` and push that branch to origin.
+            - Do not open or update any pull request yourself. The outer workflow will open a follow-up PR from `{fallback_pr_head}` into `{fallback_pr_base_repo_full_name}:{fallback_pr_base_branch}`.
+            """
+        ).strip()
+        metadata_branch_line = f"`branch_name`: the branch you pushed to (use `{agent_push_branch}` exactly)."
+        metadata_requirement_line = "Because this run uses a follow-up PR branch, write and upload `pr-metadata.json` whenever you push changes so the outer workflow can open that PR with the right title and body."
+    else:
+        if head_repo_full_name.lower() != base_repo_full_name.lower():
+            branch_instructions = dedent(
+                f"""\
+                - This PR comes from fork `{head_repo_full_name}` and maintainers are allowed to modify the fork head branch.
+                - Work on branch `{head_branch}` in repository `{head_repo_full_name}`.
+                - Fetch the existing fork head branch and continue from it. Add or use a remote for `{head_repo_full_name}` as needed.
+                - If you produce changes, commit them to `{head_branch}` and push to `{head_repo_full_name}:{head_branch}`. Do not push a same-named branch to `{base_repo_full_name}`.
+                - Do not open or update the pull request yourself.
+                """
+            ).strip()
+        else:
+            branch_instructions = dedent(
+                f"""\
+                - Work on branch `{head_branch}`.
+                - Fetch the existing branch and continue from it.
+                - If you produce changes, commit them to `{head_branch}` and push that branch to origin.
+                - Do not open or update the pull request yourself.
+                """
+            ).strip()
+        metadata_branch_line = f"`branch_name`: the branch you pushed to (use `{head_branch}` exactly)."
+        metadata_requirement_line = "If your changes materially change what this PR contains (for example, adding implementation code on top of a PR that previously only contained spec changes, or otherwise substantially broadening or narrowing the PR's scope), write `pr-metadata.json` at the repository root containing a JSON object with these required fields so the workflow can refresh the PR title and body:"
+    branch_instructions = indent(branch_instructions, "        ")
     return dedent(
         f"""\
-        Make changes on the branch `{head_branch}` for pull request #{pr_number} in repository {owner}/{repo}.
+        Make changes for pull request #{pr_number} in repository {owner}/{repo}.
 
         Pull Request Metadata:
         - Title: {pr_title}
@@ -293,17 +395,14 @@ def build_pr_comment_prompt(context: Mapping[str, Any]) -> str:
         Cloud Workflow Requirements:
         - Use the repository's local `implement-issue` skill as the base workflow.
         - You are running in a cloud environment, so the caller cannot read your local diff.
-        - Work on branch `{head_branch}`.
-        - Fetch the existing branch and continue from it.
+{branch_instructions}
         - Align any implementation changes with the plan context above when present.
         - Run the most relevant validation available in the repository.
-        - If you produce changes, commit them to `{head_branch}` and push that branch to origin.
-        - Do not open or update the pull request yourself.
         - If no implementation diff is warranted, do not push the branch.
 
         PR Description Refresh:
-        - If your changes materially change what this PR contains (for example, adding implementation code on top of a PR that previously only contained spec changes, or otherwise substantially broadening or narrowing the PR's scope), write `pr-metadata.json` at the repository root containing a JSON object with these required fields so the workflow can refresh the PR title and body:
-          - `branch_name`: the branch you pushed to (use `{head_branch}` exactly).
+        - {metadata_requirement_line}
+          - {metadata_branch_line}
           - `pr_title`: a conventional-commit-style PR title that reflects the PR's current combined scope (e.g. `feat: add retry logic for transient API failures` when implementation has been added on top of a spec PR).
           - `pr_summary`: the full markdown PR body reflecting the PR's current combined scope. When the original PR body started with `Closes #<issue_number>` or `Fixes #<issue_number>`, preserve that line at the top so GitHub still auto-closes the linked issue when the PR merges.
         - After writing `pr-metadata.json`, upload it as an artifact via `oz artifact upload pr-metadata.json` (or `oz-preview artifact upload pr-metadata.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
@@ -360,7 +459,11 @@ def apply_pr_comment_result(
     repo = str(context["repo"])
     pr_number = int(context["pr_number"])
     head_branch = str(context["head_branch"])
-    can_push_to_head_branch = bool(context.get("can_push_to_head_branch", True))
+    base_repo_full_name = str(context.get("base_repo_full_name") or f"{owner}/{repo}")
+    head_repo_full_name = str(context.get("head_repo_full_name") or base_repo_full_name)
+    branch_strategy = str(context.get("branch_strategy") or BRANCH_STRATEGY_PUSH_HEAD)
+    agent_push_repo_full_name = str(context.get("agent_push_repo_full_name") or head_repo_full_name)
+    agent_push_branch = str(context.get("agent_push_branch") or head_branch)
     requester = str(context.get("requester") or "")
     trigger_kind = str(context.get("trigger_kind") or "conversation")
     review_reply_target_id = int(context.get("review_reply_target_id") or 0)
@@ -388,32 +491,82 @@ def apply_pr_comment_result(
     created_at = getattr(run, "created_at", None)
     if not isinstance(created_at, datetime):
         created_at = datetime.now(timezone.utc)
-    if not can_push_to_head_branch:
+    if branch_strategy == BRANCH_STRATEGY_BLOCKED:
         progress.complete(
             "I analyzed the request but did not push changes because this PR head "
-            "is not allowed to publish back to the base repository."
+            "is not allowed to publish back to a safe branch."
         )
         return
+    created_after = created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo is None else created_at
+    created_after = created_after - timedelta(minutes=1)
+    push_owner, push_repo = split_repo_full_name(agent_push_repo_full_name)
+    push_repo_handle = github
+    if agent_push_repo_full_name.lower() != base_repo_full_name.lower():
+        if client is None:
+            raise RuntimeError(
+                f"Cannot verify updates to {agent_push_repo_full_name}:{agent_push_branch} without a GitHub client."
+            )
+        push_repo_handle = client.get_repo(agent_push_repo_full_name)
     if not branch_updated_since(
-        github,
-        owner,
-        repo,
-        head_branch,
-        created_after=created_at - timedelta(minutes=1),
+        push_repo_handle,
+        push_owner or owner,
+        push_repo or repo,
+        agent_push_branch,
+        created_after=created_after,
     ):
         progress.complete("I analyzed the request but did not produce any changes.")
         return
 
     pr_description_refreshed = False
-    pr_metadata = try_load_pr_metadata_artifact(getattr(run, "run_id", ""))
+    pr_metadata = result if result is not None else None
+    if pr_metadata is None:
+        pr_metadata = try_load_pr_metadata_artifact(getattr(run, "run_id", ""))
     if pr_metadata is not None:
         metadata_branch = pr_metadata.get("branch_name", "")
-        if metadata_branch != head_branch:
+        if metadata_branch != agent_push_branch:
             raise RuntimeError(
                 f"pr-metadata.json branch_name {metadata_branch!r} does not "
-                f"match the PR head branch {head_branch!r}; refusing to "
+                f"match the expected push branch {agent_push_branch!r}; refusing to "
                 f"refresh the PR title and description."
             )
+
+    fallback_pr_url = ""
+    if branch_strategy == BRANCH_STRATEGY_FALLBACK_PR_TO_FORK:
+        if pr_metadata is None:
+            raise RuntimeError(
+                f"Branch {agent_push_branch} was updated but no pr-metadata.json artifact was found."
+            )
+        fallback_base_repo_full_name = str(
+            context.get("fallback_pr_base_repo_full_name") or head_repo_full_name
+        )
+        fallback_base_branch = str(context.get("fallback_pr_base_branch") or head_branch)
+        fallback_head = str(context.get("fallback_pr_head") or "")
+        if not fallback_head:
+            base_owner, _ = split_repo_full_name(base_repo_full_name)
+            fallback_head = f"{base_owner}:{agent_push_branch}" if base_owner else agent_push_branch
+        if client is None:
+            raise RuntimeError(
+                f"Cannot open a follow-up PR against {fallback_base_repo_full_name} without a GitHub client."
+            )
+        try:
+            fork_repo = client.get_repo(fallback_base_repo_full_name)
+            fallback_pr = fork_repo.create_pull(
+                title=pr_metadata["pr_title"],
+                head=fallback_head,
+                base=fallback_base_branch,
+                body=pr_metadata["pr_summary"],
+                draft=False,
+            )
+            fallback_pr_url = str(getattr(fallback_pr, "html_url", "") or "")
+        except GithubException:
+            progress.complete(
+                "I pushed changes to "
+                f"`{agent_push_repo_full_name}:{agent_push_branch}`, but could not open "
+                f"a follow-up PR against `{fallback_base_repo_full_name}:{fallback_base_branch}`. "
+                "The GitHub App may need access to the fork before the PR can be opened."
+            )
+            return
+    elif pr_metadata is not None:
         pr.edit(
             title=pr_metadata["pr_title"],
             body=pr_metadata["pr_summary"],
@@ -432,9 +585,19 @@ def apply_pr_comment_result(
             resolved_review_comments,
         )
 
-    completion_sections = [
-        "I pushed changes to this PR based on the comment.",
-    ]
+    if branch_strategy == BRANCH_STRATEGY_FALLBACK_PR_TO_FORK:
+        if fallback_pr_url:
+            completion_sections = [
+                f"I pushed changes to `{agent_push_repo_full_name}:{agent_push_branch}` and opened a [follow-up PR]({fallback_pr_url}) against `{fallback_base_repo_full_name}:{fallback_base_branch}`.",
+            ]
+        else:
+            completion_sections = [
+                f"I pushed changes to `{agent_push_repo_full_name}:{agent_push_branch}` based on the comment.",
+            ]
+    else:
+        completion_sections = [
+            "I pushed changes to this PR based on the comment.",
+        ]
     if pr_description_refreshed:
         completion_sections.append(
             "Refreshed the PR title and description to reflect the PR's updated scope."

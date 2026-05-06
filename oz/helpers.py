@@ -99,6 +99,14 @@ def get_login(item: Any) -> str:
     return str(getattr(item, "login", "") or "")
 
 
+def split_repo_full_name(full_name: str) -> tuple[str, str]:
+    """Split an ``owner/repo`` slug, returning empty parts when malformed."""
+    if "/" not in full_name:
+        return "", ""
+    owner, repo = full_name.split("/", 1)
+    return owner, repo
+
+
 def is_automation_user(user: Any) -> bool:
     """Return whether *user* is an automation account that should not trigger workflows."""
     login = get_login(user).strip().lower()

@@ -49,6 +49,8 @@ Provision a Vercel KV resource on the project. Vercel injects `KV_REST_API_URL` 
 
 Finally, point the GitHub App's webhook URL at `https://<vercel-project>.vercel.app/api/webhook`. The webhook handler returns `202` for every delivery so the App's "Recent deliveries" UI stays green even when the cron tick is busy.
 
+Fork PR caveat: when a trusted fork PR comment cannot be applied directly to the contributor's head branch, Oz pushes a branch to the base repository and then attempts to open a follow-up PR against the contributor's fork branch. That fallback requires the GitHub App token to have enough access to create a PR in the fork repository; otherwise Oz will report the pushed branch and explain that fork access is needed.
+
 ## 3. Configure shared Oz workflow settings (optional)
 
 Repositories can commit `.github/oz/config.yml` to make workflow-level defaults visible and reviewable in source control. Oz resolves that file from the consuming repository first and falls back to the bundled [`../.github/oz/config.yml`](../.github/oz/config.yml) when absent. Discovery stops at the first existing file — the two locations are not merged. The settings live under `self_improvement` and `triage`:
