@@ -225,6 +225,11 @@ class RespondWorkflow(BaseWorkflow):
             client=github_client,
             pr=pr,
         )
+        if (
+            bool(context.get("is_cross_repository"))
+            and not bool(context.get("trigger_actor_is_trusted"))
+        ):
+            return None
         if context.get("can_push_to_head_branch") is False:
             return None
         return WorkflowDispatch(

@@ -12,6 +12,10 @@ Create the App (organization-owned or user-owned), grant it these permissions, a
 - **Issues** — Read & Write (apply labels, post comments, manage assignees)
 - **Pull requests** — Read & Write (open PRs, post reviews)
 
+**Organization permissions (optional)**
+
+- **Members** — Read-only. Required only when `respond-to-pr-comment` should allow fork PR requests from members whose webhook `author_association` is not already `OWNER`, `MEMBER`, or `COLLABORATOR`. Set `OZ_TRUSTED_GITHUB_ORG` to the GitHub organization slug to enable this membership probe.
+
 **Webhook events**
 
 - `issues`, `issue_comment`, `pull_request`, `pull_request_review`, `pull_request_review_comment`
@@ -39,6 +43,7 @@ vercel deploy
 | `WARP_REVIEW_TRIAGE_ENVIRONMENT_ID` | Optional override used by review/triage runs. Falls back to `WARP_ENVIRONMENT_ID` when empty. |
 | `CRON_SECRET` | Required random secret used to authenticate Vercel cron requests. Local development can opt out with `OZ_ALLOW_UNAUTHENTICATED_CRON=true`. |
 | `GITHUB_API_BASE_URL` | Optional. Defaults to `https://api.github.com`. Override for GitHub Enterprise. |
+| `OZ_TRUSTED_GITHUB_ORG` | Optional. GitHub organization slug used to verify trusted fork-PR comment triggers when webhook author association is insufficient. |
 
 Provision a Vercel KV resource on the project. Vercel injects `KV_REST_API_URL` / `KV_REST_API_TOKEN` automatically; the cron handler reads them at runtime through `upstash-redis`.
 
