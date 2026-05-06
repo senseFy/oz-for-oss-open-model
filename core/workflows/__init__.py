@@ -200,6 +200,21 @@ class RespondWorkflow(BaseWorkflow):
     workflow = WORKFLOW_RESPOND_TO_PR_COMMENT
     config_name = WORKFLOW_RESPOND_TO_PR_COMMENT
 
+    def _should_dispatch_run(self, context: Mapping[str, Any]) -> bool:
+        if context.get("branch_strategy") == "blocked":
+            return False
+        if (
+            bool(context.get("is_cross_repository"))
+            and not bool(context.get("trigger_actor_is_trusted"))
+        ):
+            return False
+        if (
+            not bool(context.get("is_cross_repository"))
+            and context.get("can_push_to_head_branch") is False
+        ):
+            return False
+        return True
+
     def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch | None:
         from workflows.respond_to_pr_comment import build_pr_comment_prompt, gather_pr_comment_context  # type: ignore[import-not-found]
 
@@ -225,7 +240,7 @@ class RespondWorkflow(BaseWorkflow):
             client=github_client,
             pr=pr,
         )
-        if context.get("can_push_to_head_branch") is False:
+        if not self._should_dispatch_run(context):
             return None
         return WorkflowDispatch(
             workflow=self.workflow,
