@@ -531,6 +531,7 @@ def apply_pr_comment_result(
             )
 
     fallback_pr_url = ""
+    fallback_pr_reused = False
     if branch_strategy == BRANCH_STRATEGY_FALLBACK_PR_TO_FORK:
         if pr_metadata is None:
             raise RuntimeError(
@@ -550,13 +551,28 @@ def apply_pr_comment_result(
             )
         try:
             fork_repo = client.get_repo(fallback_base_repo_full_name)
-            fallback_pr = fork_repo.create_pull(
-                title=pr_metadata["pr_title"],
-                head=fallback_head,
-                base=fallback_base_branch,
-                body=pr_metadata["pr_summary"],
-                draft=False,
+            existing_fallback_prs = list(
+                fork_repo.get_pulls(
+                    state="open",
+                    head=fallback_head,
+                    base=fallback_base_branch,
+                )
             )
+            fallback_pr_reused = bool(existing_fallback_prs)
+            if existing_fallback_prs:
+                fallback_pr = existing_fallback_prs[0]
+                fallback_pr.edit(
+                    title=pr_metadata["pr_title"],
+                    body=pr_metadata["pr_summary"],
+                )
+            else:
+                fallback_pr = fork_repo.create_pull(
+                    title=pr_metadata["pr_title"],
+                    head=fallback_head,
+                    base=fallback_base_branch,
+                    body=pr_metadata["pr_summary"],
+                    draft=False,
+                )
             fallback_pr_url = str(getattr(fallback_pr, "html_url", "") or "")
         except GithubException:
             progress.complete(
@@ -587,8 +603,9 @@ def apply_pr_comment_result(
 
     if branch_strategy == BRANCH_STRATEGY_FALLBACK_PR_TO_FORK:
         if fallback_pr_url:
+            fallback_pr_action = "updated" if fallback_pr_reused else "opened"
             completion_sections = [
-                f"I pushed changes to `{agent_push_repo_full_name}:{agent_push_branch}` and opened a [follow-up PR]({fallback_pr_url}) against `{fallback_base_repo_full_name}:{fallback_base_branch}`.",
+                f"I pushed changes to `{agent_push_repo_full_name}:{agent_push_branch}` and {fallback_pr_action} a [follow-up PR]({fallback_pr_url}) against `{fallback_base_repo_full_name}:{fallback_base_branch}`.",
             ]
         else:
             completion_sections = [

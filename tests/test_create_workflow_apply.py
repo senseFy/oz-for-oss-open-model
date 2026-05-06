@@ -246,6 +246,11 @@ class RespondToPrCommentApplyTest(unittest.TestCase):
         self.assertIs(branch_updated_since.call_args.args[0], base_repo)
         self.assertEqual(branch_updated_since.call_args.args[3], "oz-agent/respond-pr-7")
         client.get_repo.assert_called_once_with("contributor/widgets")
+        fork_repo.get_pulls.assert_called_once_with(
+            state="open",
+            head="acme:oz-agent/respond-pr-7",
+            base="feature",
+        )
         fork_repo.create_pull.assert_called_once_with(
             title="fix: handle review feedback",
             head="acme:oz-agent/respond-pr-7",
@@ -259,6 +264,69 @@ class RespondToPrCommentApplyTest(unittest.TestCase):
             "`contributor/widgets:feature`",
             progress.complete.call_args.args[0],
         )
+
+    def test_fallback_strategy_updates_existing_pr_against_fork_branch(self) -> None:
+        from core.workflows.respond_to_pr_comment import apply_pr_comment_result
+
+        base_repo = MagicMock()
+        base_repo.get_pull.return_value = MagicMock()
+        existing_pr = MagicMock(html_url="https://github.com/contributor/widgets/pull/3")
+        fork_repo = MagicMock()
+        fork_repo.get_pulls.return_value = [existing_pr]
+        client = MagicMock()
+        client.get_repo.return_value = fork_repo
+        progress = MagicMock()
+        run_created_at = datetime(2026, 4, 30, 12, 0, tzinfo=timezone.utc)
+        run = SimpleNamespace(run_id="run-1", created_at=run_created_at)
+        context = self._context()
+        context.update(
+            {
+                "head_repo_full_name": "contributor/widgets",
+                "base_repo_full_name": "acme/widgets",
+                "branch_strategy": "fallback-pr-to-fork",
+                "agent_push_repo_full_name": "acme/widgets",
+                "agent_push_branch": "oz-agent/respond-pr-7",
+                "fallback_pr_base_repo_full_name": "contributor/widgets",
+                "fallback_pr_base_branch": "feature",
+                "fallback_pr_head": "acme:oz-agent/respond-pr-7",
+            }
+        )
+        metadata = {
+            "branch_name": "oz-agent/respond-pr-7",
+            "pr_title": "fix: handle review feedback",
+            "pr_summary": "Updated summary",
+        }
+
+        with patch(
+            "core.workflows.respond_to_pr_comment.branch_updated_since",
+            return_value=True,
+        ) as branch_updated_since, patch(
+            "core.workflows.respond_to_pr_comment.try_load_resolved_review_comments_artifact",
+            return_value=[],
+        ):
+            apply_pr_comment_result(
+                base_repo,
+                context=context,
+                run=run,
+                result=metadata,
+                client=client,
+                progress=progress,
+            )
+
+        branch_updated_since.assert_called_once()
+        client.get_repo.assert_called_once_with("contributor/widgets")
+        fork_repo.get_pulls.assert_called_once_with(
+            state="open",
+            head="acme:oz-agent/respond-pr-7",
+            base="feature",
+        )
+        fork_repo.create_pull.assert_not_called()
+        existing_pr.edit.assert_called_once_with(
+            title="fix: handle review feedback",
+            body="Updated summary",
+        )
+        progress.complete.assert_called_once()
+        self.assertIn("updated a [follow-up PR]", progress.complete.call_args.args[0])
 
     def test_fallback_strategy_rejects_metadata_branch_mismatch(self) -> None:
         from core.workflows.respond_to_pr_comment import apply_pr_comment_result
