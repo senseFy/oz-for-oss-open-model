@@ -168,6 +168,9 @@ class BuildReviewRequestTest(_BuilderTestBase):
         review_module.build_review_prompt_for_dispatch = MagicMock(  # type: ignore[attr-defined]
             return_value="REVIEW_PROMPT_BODY"
         )
+        review_module.enforce_pr_issue_state_for_review = MagicMock(  # type: ignore[attr-defined]
+            return_value=True
+        )
 
     def _payload(self) -> dict[str, Any]:
         return {
@@ -346,13 +349,34 @@ class BuildReviewRequestTest(_BuilderTestBase):
         review_module = sys.modules["workflows.review_pr"]
         review_module.gather_review_context.assert_called_once()  # type: ignore[attr-defined]
 
+    def test_skips_review_when_issue_state_enforcement_blocks(self) -> None:
+        from core.builders import build_review_request
+
+        github_client, repo, _pr = self._github_client_with_review_comments()
+        review_module = sys.modules["workflows.review_pr"]
+        review_module.enforce_pr_issue_state_for_review.return_value = False  # type: ignore[attr-defined]
+
+        request = build_review_request(
+            self._payload(),
+            github_client=github_client,
+            workspace_path=Path("/tmp/ws"),
+        )
+
+        self.assertIsNone(request)
+        repo.get_pull.assert_called_once_with(42)
+        review_module.enforce_pr_issue_state_for_review.assert_called_once()  # type: ignore[attr-defined]
+        review_module.gather_review_context.assert_not_called()  # type: ignore[attr-defined]
+        review_module.build_review_prompt_for_dispatch.assert_not_called()  # type: ignore[attr-defined]
+
     def test_fails_open_when_explicit_invocation_count_lookup_fails(self) -> None:
         from core.builders import build_review_request
 
         github_client = MagicMock()
         repo = MagicMock(name="repo")
+        pr = MagicMock(name="pr")
         github_client.get_repo.return_value = repo
-        repo.get_pull.side_effect = RuntimeError("GitHub API unavailable")
+        repo.get_pull.return_value = pr
+        pr.get_issue_comments.side_effect = RuntimeError("GitHub API unavailable")
 
         with self.assertLogs("core.workflows", level="ERROR"):
             request = build_review_request(
@@ -364,6 +388,7 @@ class BuildReviewRequestTest(_BuilderTestBase):
         self.assertIsNotNone(request)
         repo.get_pull.assert_called_once_with(42)
         review_module = sys.modules["workflows.review_pr"]
+        review_module.enforce_pr_issue_state_for_review.assert_called_once()  # type: ignore[attr-defined]
         review_module.gather_review_context.assert_called_once()  # type: ignore[attr-defined]
 
 
