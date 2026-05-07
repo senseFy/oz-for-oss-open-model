@@ -102,7 +102,7 @@ class RepoScopedVerificationPromptTest(unittest.TestCase):
         self.assertIn("the top-level `body` field of `review.json`", prompt)
         self.assertNotIn("Do not run `git fetch`, `git checkout`", prompt)
 
-    def test_implementation_prompt_uses_webhook_repository_without_hardcoding(self) -> None:
+    def test_implementation_prompt_uses_target_repository_without_hardcoding(self) -> None:
         prompt = build_create_implementation_prompt(
             owner="acme",
             repo="widgets",
@@ -123,6 +123,7 @@ class RepoScopedVerificationPromptTest(unittest.TestCase):
         self.assertIn("Target ref/branch: `oz-agent/implement-issue-439`", prompt)
         self.assertIn("do not hard-code behavior for any one repository name", prompt)
         self.assertIn("commands attempted", prompt)
+        self.assertNotIn("webhook", prompt.lower())
 
     def test_pr_comment_prompt_verifies_agent_push_repository(self) -> None:
         prompt = build_pr_comment_prompt(

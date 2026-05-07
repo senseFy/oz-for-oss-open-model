@@ -9,13 +9,13 @@ def format_repo_scoped_verification_section(
     output_artifact: str,
     output_summary_location: str,
 ) -> str:
-    """Return prompt text requiring verification against the webhook repo/ref."""
-    target_repo = target_repo_full_name.strip() or "the webhook repository"
-    ref = target_ref.strip() or "the webhook ref"
+    """Return prompt text requiring verification against an explicit repo/ref target."""
+    target_repo = target_repo_full_name.strip() or "the target repository"
+    ref = target_ref.strip() or "the target ref"
     sha = target_sha.strip()
     lines = [
         "Repository-Scoped Verification (required before final output):",
-        "- Resolve the verification target from the webhook metadata, not from whatever repository happens to be checked out locally:",
+        "- Verify against this target, not whatever repository happens to be checked out locally:",
         f"  - Target repository: `{target_repo}`",
         f"  - Target ref/branch: `{ref}`",
     ]
