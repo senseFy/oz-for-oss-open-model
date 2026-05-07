@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 from . import conftest  # noqa: F401
 
-from oz.helpers import parse_pr_body_issue_references
 from workflows.review_pr import (  # type: ignore[import-not-found]
     check_pr_issue_state_for_review,
     enforce_pr_issue_state_for_review,
@@ -57,45 +56,6 @@ class _Repo:
         return self.issues[number]
 
 
-class ParsePrBodyIssueReferencesTest(unittest.TestCase):
-    def test_parses_keywords_qualified_refs_and_direct_urls(self) -> None:
-        refs = parse_pr_body_issue_references(
-            "acme",
-            "widgets",
-            "\n".join(
-                [
-                    "Fixes #12",
-                    "Resolves other/project#99",
-                    "See https://github.com/acme/widgets/issues/34 for details.",
-                ]
-            ),
-        )
-
-        self.assertEqual(
-            refs,
-            [
-                {
-                    "owner": "acme",
-                    "repo": "widgets",
-                    "number": 12,
-                    "source": "prBodyKeyword",
-                },
-                {
-                    "owner": "acme",
-                    "repo": "widgets",
-                    "number": 34,
-                    "source": "prBodyUrl",
-                },
-                {
-                    "owner": "other",
-                    "repo": "project",
-                    "number": 99,
-                    "source": "prBodyKeyword",
-                },
-            ],
-        )
-
-
 class CheckPrIssueStateForReviewTest(unittest.TestCase):
     def _check(
         self,
@@ -103,7 +63,6 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
         changed_files: list[str],
         issue_numbers: list[int],
         labels_by_issue: dict[int, list[str]],
-        pr_body_issue_numbers: list[int] | None = None,
         github_linked_issue_numbers: list[int] | None = None,
         explicit_issue_numbers: list[int] | None = None,
     ) -> dict:
@@ -115,21 +74,12 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
         )
         association = {
             "same_repo_issue_numbers": issue_numbers,
-            "pr_body_issue_references": [
-                {
-                    "owner": "acme",
-                    "repo": "widgets",
-                    "number": number,
-                    "source": "prBodyKeyword",
-                }
-                for number in (pr_body_issue_numbers or [])
-            ],
             "github_linked_issues": [
                 {
                     "owner": "acme",
                     "repo": "widgets",
                     "number": number,
-                    "source": "graphqlClosingIssuesReferences",
+                    "source": "closingIssuesReferences",
                 }
                 for number in (github_linked_issue_numbers or [])
             ],
@@ -152,7 +102,7 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
             changed_files=["specs/GH10/product.md"],
             issue_numbers=[10],
             labels_by_issue={10: ["ready-to-spec"]},
-            pr_body_issue_numbers=[10],
+            github_linked_issue_numbers=[10],
         )
 
         self.assertTrue(check["allowed"])
@@ -165,7 +115,7 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
             changed_files=["core/routing.py"],
             issue_numbers=[11],
             labels_by_issue={11: ["ready-to-implement"]},
-            pr_body_issue_numbers=[11],
+            github_linked_issue_numbers=[11],
         )
 
         self.assertTrue(check["allowed"])
@@ -181,18 +131,16 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
 
         self.assertFalse(check["allowed"])
         self.assertEqual(check["issue_numbers"], [])
-        self.assertEqual(check["pr_body_issue_numbers"], [])
 
     def test_wrong_label_fails_with_issue_status(self) -> None:
         check = self._check(
             changed_files=["core/routing.py"],
             issue_numbers=[12],
             labels_by_issue={12: ["ready-to-spec"]},
-            pr_body_issue_numbers=[12],
+            github_linked_issue_numbers=[12],
         )
 
         self.assertFalse(check["allowed"])
-        self.assertEqual(check["pr_body_issue_numbers"], [12])
         self.assertEqual(check["issue_statuses"][0].readiness_labels, ["ready-to-spec"])
 
     def test_multiple_issues_pass_when_any_issue_is_ready(self) -> None:
@@ -203,13 +151,13 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
                 13: ["triaged"],
                 14: ["ready-to-implement"],
             },
-            pr_body_issue_numbers=[13, 14],
+            github_linked_issue_numbers=[13, 14],
         )
 
         self.assertTrue(check["allowed"])
         self.assertEqual(check["ready_issue_numbers"], [14])
 
-    def test_github_linked_issue_passes_without_pr_body_reference(self) -> None:
+    def test_github_linked_issue_passes(self) -> None:
         check = self._check(
             changed_files=["core/routing.py"],
             issue_numbers=[15],
@@ -219,7 +167,6 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
 
         self.assertTrue(check["allowed"])
         self.assertEqual(check["issue_numbers"], [15])
-        self.assertEqual(check["pr_body_issue_numbers"], [])
 
     def test_explicit_payload_issue_passes_without_pr_body_reference(self) -> None:
         check = self._check(
@@ -274,6 +221,7 @@ class EnforcePrIssueStateForReviewTest(unittest.TestCase):
         self.assertIn("This PR is not linked to an issue that is marked with `ready-to-implement`", body)
         self.assertIn("Required readiness label: `ready-to-implement`", body)
         self.assertIn("Closes #123", body)
+        self.assertNotIn("PR description issue reference", body)
         # Verify REQUEST_CHANGES review was posted
         self.assertEqual(len(reviews_created), 1)
         self.assertEqual(reviews_created[0]["event"], "REQUEST_CHANGES")

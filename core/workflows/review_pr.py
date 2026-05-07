@@ -200,16 +200,10 @@ def check_pr_issue_state_for_review(
         repo,
         association.get("github_linked_issues") or [],
     )
-    pr_body_issue_numbers = _same_repo_issue_numbers_from_refs(
-        owner,
-        repo,
-        association.get("pr_body_issue_references") or [],
-    )
     issue_numbers = list(
         dict.fromkeys(
             _positive_issue_numbers(explicit_issue_numbers)
             + github_linked_issue_numbers
-            + pr_body_issue_numbers
         )
     )
     issue_statuses = [
@@ -235,7 +229,6 @@ def check_pr_issue_state_for_review(
         "required_label": required_label,
         "association": association,
         "issue_numbers": issue_numbers,
-        "pr_body_issue_numbers": pr_body_issue_numbers,
         "issue_statuses": issue_statuses,
         "ready_issue_numbers": ready_issue_numbers,
     }
@@ -266,17 +259,8 @@ def _format_pr_issue_state_failure_message(
     requester: str,
 ) -> str:
     required_label = str(check["required_label"])
-    pr_kind = "spec/Markdown-only" if check.get("spec_only") else "code"
     issue_numbers = [int(number) for number in check.get("issue_numbers") or []]
-    pr_body_issue_numbers = [
-        int(number) for number in check.get("pr_body_issue_numbers") or []
-    ]
     associated_text = _format_issue_numbers(issue_numbers) if issue_numbers else "none"
-    body_ref_text = (
-        _format_issue_numbers(pr_body_issue_numbers)
-        if pr_body_issue_numbers
-        else "none found"
-    )
     opening = (
         f"This PR is not linked to an issue that is marked with `{required_label}`."
     )
@@ -288,7 +272,6 @@ def _format_pr_issue_state_failure_message(
         [
             opening,
             "Issue-state enforcement details:",
-            f"- PR description issue reference: {body_ref_text}",
             f"- Associated same-repo issues checked: {associated_text}",
             f"- Required readiness label: `{required_label}`",
         ]
@@ -302,8 +285,7 @@ def _format_pr_issue_state_failure_message(
         )
     sections.append(
         f"To continue, link this PR to a same-repo issue such as `Closes #123` "
-        f"or a direct issue URL in the PR description, and make sure that issue "
-        f"has `{required_label}`."
+        f"in the PR description, and make sure that issue has `{required_label}`."
     )
     return "\n\n".join(sections)
 

@@ -49,18 +49,6 @@ _CLOSING_ISSUES_QUERY = (
     " }"
 )
 
-_PR_BODY_ISSUE_REF_PATTERN = re.compile(
-    r"(?:(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+))?#(?P<number>\d+)"
-)
-_PR_BODY_LINKED_KEYWORD_PATTERN = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|reference[sd]?)\b",
-    re.IGNORECASE,
-)
-_PR_BODY_ISSUE_URL_PATTERN = re.compile(
-    r"https?://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)/issues/(?P<number>\d+)",
-    re.IGNORECASE,
-)
-
 _MANUAL_LINKED_ISSUES_QUERY = (
     "query($owner: String!, $name: String!, $number: Int!, $after: String) {"
     " repository(owner: $owner, name: $name) {"
@@ -1726,77 +1714,6 @@ def _normalize_github_linked_issue(node: Any, *, source: str) -> dict[str, Any] 
         "source": source,
     }
 
-def _issue_ref(
-    *,
-    owner: str,
-    repo: str,
-    number: int,
-    source: str,
-) -> dict[str, Any]:
-    return {
-        "owner": owner,
-        "repo": repo,
-        "number": int(number),
-        "source": source,
-    }
-
-
-def parse_pr_body_issue_references(
-    owner: str,
-    repo: str,
-    body: str,
-) -> list[dict[str, Any]]:
-    """Return issue references statically detected from a PR description.
-
-    Bare ``#123`` references inherit the current repository. Qualified
-    ``owner/repo#123`` references and direct GitHub issue URLs keep their
-    explicit repository so callers can later filter to same-repo issues.
-    """
-    default_owner = owner.strip()
-    default_repo = repo.strip()
-    if not default_owner or not default_repo:
-        return []
-    refs: dict[tuple[str, str, int, str], dict[str, Any]] = {}
-    for line in str(body or "").splitlines():
-        if not _PR_BODY_LINKED_KEYWORD_PATTERN.search(line):
-            continue
-        for match in _PR_BODY_ISSUE_REF_PATTERN.finditer(line):
-            number = int(match.group("number"))
-            ref_owner = (match.group("owner") or default_owner).strip()
-            ref_repo = (match.group("repo") or default_repo).strip()
-            if not ref_owner or not ref_repo:
-                continue
-            key = (ref_owner.lower(), ref_repo.lower(), number, "prBodyKeyword")
-            refs[key] = _issue_ref(
-                owner=ref_owner,
-                repo=ref_repo,
-                number=number,
-                source="prBodyKeyword",
-            )
-    for match in _PR_BODY_ISSUE_URL_PATTERN.finditer(str(body or "")):
-        number = int(match.group("number"))
-        ref_owner = match.group("owner").strip()
-        ref_repo = match.group("repo").strip()
-        if not ref_owner or not ref_repo:
-            continue
-        key = (ref_owner.lower(), ref_repo.lower(), number, "prBodyUrl")
-        refs[key] = _issue_ref(
-            owner=ref_owner,
-            repo=ref_repo,
-            number=number,
-            source="prBodyUrl",
-        )
-    return sorted(
-        refs.values(),
-        key=lambda item: (
-            str(item["owner"]).lower(),
-            str(item["repo"]).lower(),
-            int(item["number"]),
-            str(item["source"]),
-        ),
-    )
-
-
 def _graphql_pull_request_data(
     requester: Any,
     query: str,
@@ -2003,18 +1920,8 @@ def resolve_pr_association(
         repo,
         github_linked_issues,
     )
-    pr_body_issue_references = parse_pr_body_issue_references(
-        owner,
-        repo,
-        str(get_field(pr, "body", "") or ""),
-    )
-    same_repo_pr_body_numbers = _same_repo_issue_numbers(
-        owner,
-        repo,
-        pr_body_issue_references,
-    )
     same_repo_issue_numbers = _dedupe_ints(
-        deterministic_issue_numbers + same_repo_linked_numbers + same_repo_pr_body_numbers
+        deterministic_issue_numbers + same_repo_linked_numbers
     )
 
     primary_issue_number: int | None = None
@@ -2027,15 +1934,10 @@ def resolve_pr_association(
         primary_issue_number = same_repo_linked_numbers[0]
     elif len(same_repo_linked_numbers) > 1:
         ambiguous = True
-    elif len(same_repo_pr_body_numbers) == 1:
-        primary_issue_number = same_repo_pr_body_numbers[0]
-    elif len(same_repo_pr_body_numbers) > 1:
-        ambiguous = True
 
     return {
         "deterministic_issue_numbers": deterministic_issue_numbers,
         "github_linked_issues": github_linked_issues,
-        "pr_body_issue_references": pr_body_issue_references,
         "same_repo_issue_numbers": same_repo_issue_numbers,
         "primary_issue_number": primary_issue_number,
         "ambiguous": ambiguous,
