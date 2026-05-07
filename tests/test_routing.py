@@ -668,7 +668,7 @@ class PullRequestEventTest(unittest.TestCase):
         )
         self.assertIsNone(decision.workflow)
 
-    def test_synchronize_non_draft_pr_routes_to_review(self) -> None:
+    def test_synchronize_non_draft_pr_is_dropped(self) -> None:
         decision = route_event(
             "pull_request",
             {
@@ -676,7 +676,8 @@ class PullRequestEventTest(unittest.TestCase):
                 "pull_request": {"state": "open", "draft": False},
             },
         )
-        self.assertEqual(decision.workflow, WORKFLOW_REVIEW_PR)
+        self.assertIsNone(decision.workflow)
+        self.assertIn("not handled", decision.reason)
 
     def test_synchronize_draft_pr_is_dropped(self) -> None:
         decision = route_event(
@@ -688,15 +689,16 @@ class PullRequestEventTest(unittest.TestCase):
         )
         self.assertIsNone(decision.workflow)
 
-    def test_edited_non_draft_pr_routes_to_review(self) -> None:
+    def test_edited_is_dropped(self) -> None:
         decision = route_event(
             "pull_request",
             {
                 "action": "edited",
-                "pull_request": {"state": "open", "draft": False},
+                "pull_request": {"state": "open"},
             },
         )
-        self.assertEqual(decision.workflow, WORKFLOW_REVIEW_PR)
+        self.assertIsNone(decision.workflow)
+        self.assertIn("not handled", decision.reason)
 
     def test_closed_pr_skipped(self) -> None:
         decision = route_event(
