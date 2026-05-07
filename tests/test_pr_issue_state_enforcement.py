@@ -193,7 +193,7 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
 
         self.assertFalse(check["allowed"])
         self.assertEqual(check["pr_body_issue_numbers"], [12])
-        self.assertEqual(check["issue_statuses"][0]["readiness_labels"], ["ready-to-spec"])
+        self.assertEqual(check["issue_statuses"][0].readiness_labels, ["ready-to-spec"])
 
     def test_multiple_issues_pass_when_any_issue_is_ready(self) -> None:
         check = self._check(
@@ -244,13 +244,19 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
 
 
 class EnforcePrIssueStateForReviewTest(unittest.TestCase):
-    def test_blocked_pr_posts_actionable_comment(self) -> None:
+    def test_blocked_pr_posts_actionable_comment_and_changes_requested_review(self) -> None:
         pr_issue = _IssueWithComments()
         repo = _Repo({7: pr_issue})
+        reviews_created: list[dict] = []
+
+        def _create_review(body: str, event: str) -> None:
+            reviews_created.append({"body": body, "event": event})
+
         pr = SimpleNamespace(
             number=7,
             body="",
             get_files=lambda: [_file("core/routing.py")],
+            create_review=_create_review,
         )
 
         allowed = enforce_pr_issue_state_for_review(
@@ -265,9 +271,13 @@ class EnforcePrIssueStateForReviewTest(unittest.TestCase):
         self.assertEqual(len(pr_issue.comments), 1)
         body = pr_issue.comments[0].body
         self.assertIn("@alice", body)
-        self.assertIn("PR description issue reference: none found", body)
+        self.assertIn("This PR is not linked to an issue that is marked with `ready-to-implement`", body)
         self.assertIn("Required readiness label: `ready-to-implement`", body)
         self.assertIn("Closes #123", body)
+        # Verify REQUEST_CHANGES review was posted
+        self.assertEqual(len(reviews_created), 1)
+        self.assertEqual(reviews_created[0]["event"], "REQUEST_CHANGES")
+        self.assertIn("not linked to an issue", reviews_created[0]["body"])
 
 
 if __name__ == "__main__":

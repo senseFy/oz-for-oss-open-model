@@ -1,6 +1,7 @@
 from __future__ import annotations
 import fnmatch
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Mapping, TypedDict
@@ -144,38 +145,41 @@ def _issue_label_names(issue: Any) -> list[str]:
     ]
 
 
+@dataclass(frozen=True)
+class IssueReadinessStatus:
+    """Structured result from checking a single issue's readiness labels."""
+
+    number: int
+    labels: list[str]
+    readiness_labels: list[str]
+    has_required_label: bool
+    is_pull_request: bool
+
+
 def _issue_readiness_status(
     github: Repository,
     issue_number: int,
     *,
     required_label: str,
-) -> dict[str, Any]:
+) -> IssueReadinessStatus | None:
     try:
         issue = github.get_issue(issue_number)
-    except Exception as exc:
+    except Exception:
         logger.exception(
             "review-pr: failed to fetch associated issue #%s during issue-state enforcement",
             issue_number,
         )
-        return {
-            "number": issue_number,
-            "labels": [],
-            "readiness_labels": [],
-            "has_required_label": False,
-            "is_pull_request": False,
-            "error": str(exc),
-        }
+        return None
     labels = _issue_label_names(issue)
     readiness_labels = [label for label in labels if label in _READY_LABELS]
     is_pull_request = bool(get_field(issue, "pull_request", None))
-    return {
-        "number": issue_number,
-        "labels": labels,
-        "readiness_labels": readiness_labels,
-        "has_required_label": required_label in labels and not is_pull_request,
-        "is_pull_request": is_pull_request,
-        "error": "",
-    }
+    return IssueReadinessStatus(
+        number=issue_number,
+        labels=labels,
+        readiness_labels=readiness_labels,
+        has_required_label=required_label in labels and not is_pull_request,
+        is_pull_request=is_pull_request,
+    )
 
 
 def check_pr_issue_state_for_review(
@@ -209,17 +213,21 @@ def check_pr_issue_state_for_review(
         )
     )
     issue_statuses = [
-        _issue_readiness_status(
-            github,
-            issue_number,
-            required_label=required_label,
-        )
+        status
         for issue_number in issue_numbers
+        if (
+            status := _issue_readiness_status(
+                github,
+                issue_number,
+                required_label=required_label,
+            )
+        )
+        is not None
     ]
     ready_issue_numbers = [
-        int(status["number"])
+        status.number
         for status in issue_statuses
-        if status.get("has_required_label")
+        if status.has_required_label
     ]
     return {
         "allowed": bool(ready_issue_numbers),
@@ -237,23 +245,19 @@ def _format_issue_numbers(numbers: list[int]) -> str:
     return ", ".join(f"#{number}" for number in numbers)
 
 
-def _format_issue_status(status: Mapping[str, Any], *, required_label: str) -> str:
-    number = int(status.get("number") or 0)
-    readiness_labels = status.get("readiness_labels") or []
+def _format_issue_status(status: IssueReadinessStatus, *, required_label: str) -> str:
     readiness_text = (
-        ", ".join(f"`{label}`" for label in readiness_labels)
-        if readiness_labels
+        ", ".join(f"`{label}`" for label in status.readiness_labels)
+        if status.readiness_labels
         else "none"
     )
-    if status.get("is_pull_request"):
+    if status.is_pull_request:
         state = "is a pull request, not an issue"
-    elif status.get("has_required_label"):
+    elif status.has_required_label:
         state = f"has `{required_label}`"
-    elif status.get("error"):
-        state = "could not be fetched"
     else:
         state = f"missing `{required_label}`"
-    return f"- #{number}: {state}; readiness labels present: {readiness_text}"
+    return f"- #{status.number}: {state}; readiness labels present: {readiness_text}"
 
 
 def _format_pr_issue_state_failure_message(
@@ -273,16 +277,9 @@ def _format_pr_issue_state_failure_message(
         if pr_body_issue_numbers
         else "none found"
     )
-    if issue_numbers:
-        opening = (
-            f"I can't start review yet because this {pr_kind} PR is not linked "
-            f"to a same-repo issue with `{required_label}`."
-        )
-    else:
-        opening = (
-            f"I can't start review yet because this {pr_kind} PR does not have "
-            "a statically detectable same-repo issue link."
-        )
+    opening = (
+        f"This PR is not linked to an issue that is marked with `{required_label}`."
+    )
     sections: list[str] = []
     normalized_requester = requester.strip().removeprefix("@")
     if normalized_requester:
@@ -340,7 +337,7 @@ def enforce_pr_issue_state_for_review(
     requester: str,
     explicit_issue_numbers: list[int] | None = None,
 ) -> bool:
-    """Post an actionable PR comment and return False when review is blocked."""
+    """Post a REQUEST_CHANGES review and return False when review is blocked."""
     files = list(pr.get_files())
     changed_files = [str(file.filename) for file in files]
     check = check_pr_issue_state_for_review(
@@ -356,17 +353,28 @@ def enforce_pr_issue_state_for_review(
     pr_number = int(get_field(pr, "number") or 0)
     if pr_number <= 0:
         logger.warning(
-            "review-pr: cannot post issue-state enforcement comment without a PR number"
+            "review-pr: cannot post issue-state enforcement review without a PR number"
         )
         return False
+    failure_body = _format_pr_issue_state_failure_message(
+        check,
+        requester=requester,
+    )
     _upsert_pr_issue_state_enforcement_comment(
         github,
         pr_number=pr_number,
-        body=_format_pr_issue_state_failure_message(
-            check,
-            requester=requester,
-        ),
+        body=failure_body,
     )
+    review_body = f"{failure_body}\n\n{POWERED_BY_SUFFIX}"
+    try:
+        pr.create_review(body=review_body, event="REQUEST_CHANGES")
+    except Exception:
+        logger.exception(
+            "review-pr: failed to post REQUEST_CHANGES enforcement review for %s/%s PR #%s",
+            owner,
+            repo,
+            pr_number,
+        )
     return False
 
 
