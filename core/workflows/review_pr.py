@@ -319,7 +319,13 @@ def enforce_pr_issue_state_for_review(
     requester: str,
     explicit_issue_numbers: list[int] | None = None,
 ) -> bool:
-    """Post a REQUEST_CHANGES review and return False when review is blocked."""
+    """Post a REQUEST_CHANGES review and return False when review is blocked.
+
+    Enforcement is skipped for org members/collaborators — only external
+    contributors are required to link a ready issue.
+    """
+    if not _is_non_member_pr(pr):
+        return True
     files = list(pr.get_files())
     changed_files = [str(file.filename) for file in files]
     check = check_pr_issue_state_for_review(

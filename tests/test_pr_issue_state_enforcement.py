@@ -202,6 +202,8 @@ class EnforcePrIssueStateForReviewTest(unittest.TestCase):
         pr = SimpleNamespace(
             number=7,
             body="",
+            user=SimpleNamespace(login="external-user", type="User"),
+            author_association="NONE",
             get_files=lambda: [_file("core/routing.py")],
             create_review=_create_review,
         )
@@ -226,6 +228,31 @@ class EnforcePrIssueStateForReviewTest(unittest.TestCase):
         self.assertEqual(len(reviews_created), 1)
         self.assertEqual(reviews_created[0]["event"], "REQUEST_CHANGES")
         self.assertIn("not linked to an issue", reviews_created[0]["body"])
+
+
+    def test_org_member_pr_skips_enforcement(self) -> None:
+        pr_issue = _IssueWithComments()
+        repo = _Repo({8: pr_issue})
+
+        pr = SimpleNamespace(
+            number=8,
+            body="",
+            user=SimpleNamespace(login="org-member", type="User"),
+            author_association="MEMBER",
+            get_files=lambda: [_file("core/routing.py")],
+            create_review=lambda body, event: None,
+        )
+
+        allowed = enforce_pr_issue_state_for_review(
+            repo,  # type: ignore[arg-type]
+            owner="acme",
+            repo="widgets",
+            pr=pr,
+            requester="org-member",
+        )
+
+        self.assertTrue(allowed)
+        self.assertEqual(len(pr_issue.comments), 0)
 
 
 if __name__ == "__main__":
