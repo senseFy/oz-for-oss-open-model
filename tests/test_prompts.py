@@ -101,6 +101,7 @@ class RepoScopedVerificationPromptTest(unittest.TestCase):
         self.assertIn("Target commit SHA: `abc123`", prompt)
         self.assertIn("the top-level `body` field of `review.json`", prompt)
         self.assertNotIn("Do not run `git fetch`, `git checkout`", prompt)
+        self.assertNotIn("webhook", prompt.lower())
 
     def test_implementation_prompt_uses_target_repository_without_hardcoding(self) -> None:
         prompt = build_create_implementation_prompt(
@@ -150,6 +151,7 @@ class RepoScopedVerificationPromptTest(unittest.TestCase):
         self.assertIn("Target repository: `octo/tools`", prompt)
         self.assertIn("Target ref/branch: `feature`", prompt)
         self.assertIn("pass/fail/skipped status", prompt)
+        self.assertNotIn("webhook", prompt.lower())
 
 
 class PrCommentContextBranchSafetyTest(unittest.TestCase):
