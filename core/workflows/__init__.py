@@ -71,6 +71,17 @@ def _resolve_issue_number(payload: Mapping[str, Any]) -> int:
     raise ValueError("payload does not include an issue number")
 
 
+def _resolve_linked_issue_numbers(payload: Mapping[str, Any]) -> list[int]:
+    raw = payload.get("linked_issue_number")
+    try:
+        number = int(raw or 0)
+    except (TypeError, ValueError):
+        return []
+    if number <= 0:
+        return []
+    return [number]
+
+
 def _resolve_requester(payload: Mapping[str, Any]) -> str:
     comment = payload.get("comment")
     if isinstance(comment, dict):
@@ -184,17 +195,22 @@ class ReviewWorkflow(BaseWorkflow):
 
     def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch | None:
         from oz.helpers import format_review_start_line  # type: ignore[import-not-found]
-        from workflows.review_pr import build_review_prompt_for_dispatch, gather_review_context  # type: ignore[import-not-found]
+        from workflows.review_pr import (  # type: ignore[import-not-found]
+            build_review_prompt_for_dispatch,
+            enforce_pr_issue_state_for_review,
+            gather_review_context,
+        )
 
         owner, repo, full_name = _resolve_owner_repo(payload)
         pr_number = _resolve_pr_number(payload)
         requester = _resolve_requester(payload)
         trigger_source = _resolve_trigger_source(payload)
         repo_handle = github_client.get_repo(full_name)
+        pr = repo_handle.get_pull(pr_number)
         if _is_explicit_review_invocation(payload):
             try:
                 invocation_count = _explicit_review_invocation_count(
-                    repo_handle.get_pull(pr_number)
+                    pr
                 )
             except Exception:
                 # Fail open: if the throttle lookup itself fails for any
@@ -216,6 +232,15 @@ class ReviewWorkflow(BaseWorkflow):
                     MAX_EXPLICIT_REVIEW_INVOCATIONS_PER_PR,
                 )
                 return None
+        if not enforce_pr_issue_state_for_review(
+            repo_handle,
+            owner=owner,
+            repo=repo,
+            pr=pr,
+            requester=requester,
+            explicit_issue_numbers=_resolve_linked_issue_numbers(payload),
+        ):
+            return None
         context = gather_review_context(
             repo_handle,
             owner=owner,
