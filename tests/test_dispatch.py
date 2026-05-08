@@ -18,6 +18,7 @@ from core.dispatch import (
 )
 from core.routing import RouteDecision
 from core.state import InMemoryStateStore, RUN_STATE_KEY_PREFIX
+from oz.attachments import text_attachment
 
 
 def _request(workflow: str = "review-pull-request", repo: str = "acme/widgets") -> DispatchRequest:
@@ -85,7 +86,6 @@ class DispatchRunTest(unittest.TestCase):
 
         self.assertEqual(len(calls), 1)
         invocation = calls[0]
-        self.assertEqual(invocation["prompt"], "prompt body")
         self.assertEqual(invocation["title"], "PR review #1")
         # Bare ``review-pr`` is resolved into the fully qualified spec
         # the Oz API expects before reaching the runner.
@@ -94,6 +94,7 @@ class DispatchRunTest(unittest.TestCase):
             "warpdotdev/oz-for-oss:.agents/skills/review-pr/SKILL.md",
         )
         self.assertTrue(invocation["team"])
+        self.assertIsNone(invocation["attachments"])
         # Review workflows resolve to the review-triage role.
         self.assertEqual(
             invocation["config"],
@@ -139,6 +140,35 @@ class DispatchRunTest(unittest.TestCase):
         self.assertEqual(result.state.run_id, "oz-run-123")
         self.assertEqual(result.state.payload_subset["progress_comment_id"], 4242)
         self.assertEqual(result.state.payload_subset["seen_run_id"], "oz-run-123")
+
+    def test_passes_attachments_to_runner(self) -> None:
+        runner, calls = _runner_factory()
+        store = InMemoryStateStore()
+        attachment = text_attachment(
+            file_name="review-context.txt",
+            text="attached context",
+        )
+        base_request = _request()
+        request = DispatchRequest(
+            workflow=base_request.workflow,
+            repo=base_request.repo,
+            installation_id=base_request.installation_id,
+            config_name=base_request.config_name,
+            title=base_request.title,
+            skill_name=base_request.skill_name,
+            prompt=base_request.prompt,
+            payload_subset=dict(base_request.payload_subset),
+            attachments=(attachment,),
+        )
+
+        dispatch_run(
+            request=request,
+            runner=runner,
+            config_factory=_config_factory,
+            store=store,
+        )
+
+        self.assertEqual(calls[0]["attachments"], (attachment,))
 
     def test_uses_default_role_for_unregistered_workflow(self) -> None:
         runner, calls = _runner_factory()

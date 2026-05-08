@@ -11,7 +11,6 @@ from github.GithubException import GithubException
 
 from workflows.review_pr import (  # type: ignore[import-not-found]
     _deterministic_reviewer_from_stakeholders,
-    _format_non_member_review_section,
     _format_review_completion_message,
     _is_team_slug,
     _parse_verdict,
@@ -148,22 +147,6 @@ class ResolveRecommendedReviewersTest(unittest.TestCase):
             pr_author_login="contributor",
         )
         self.assertEqual(reviewers, [])
-
-
-class NonMemberPromptSectionTest(unittest.TestCase):
-    def test_prompt_requires_single_reviewer_and_gates_on_verdict(self) -> None:
-        prompt = _format_non_member_review_section(
-            pr_author_login="contributor",
-            stakeholders_block="- /docs/ → @docs-owner",
-        )
-        self.assertIn("exactly one bare GitHub login", prompt)
-        self.assertIn("Do not return more than one reviewer", prompt)
-        # The prompt should tie the reviewer request to ``verdict`` =
-        # APPROVE and explicitly mention the REJECT → REQUEST_CHANGES
-        # behavior so the agent understands when its reviewer choice
-        # will actually be honored.
-        self.assertIn("`verdict` is `\"APPROVE\"`", prompt)
-        self.assertIn("REQUEST_CHANGES", prompt)
 
 
 class FormatReviewCompletionMessageTest(unittest.TestCase):

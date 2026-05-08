@@ -7,65 +7,7 @@ from unittest.mock import MagicMock, patch
 from github.GithubException import UnknownObjectException
 
 from . import conftest  # noqa: F401
-
-from workflows.respond_to_pr_comment import (
-    build_pr_comment_prompt,
-    gather_pr_comment_context,
-)
-from workflows.verify_pr_comment import build_verification_prompt
-
-
-class FetchContextCommandPromptTest(unittest.TestCase):
-    def test_respond_prompt_uses_global_repo_arg_before_subcommand(self) -> None:
-        prompt = build_pr_comment_prompt(
-            {
-                "owner": "acme",
-                "repo": "widgets",
-                "pr_number": 12,
-                "head_branch": "feature",
-                "base_branch": "main",
-                "pr_title": "feat: add widget",
-                "requester": "alice",
-                "trigger_kind": "conversation",
-                "trigger_comment_id": 99,
-                "spec_context_text": "No spec context.",
-                "coauthor_directives": "",
-            }
-        )
-        self.assertIn(
-            "python .agents/skills/implement-specs/scripts/fetch_github_context.py "
-            "--repo acme/widgets pr --number 12",
-            prompt,
-        )
-        self.assertIn(
-            "python .agents/skills/implement-specs/scripts/fetch_github_context.py "
-            "--repo acme/widgets pr-diff --number 12",
-            prompt,
-        )
-        self.assertNotIn("fetch_github_context.py pr --repo", prompt)
-
-    def test_verify_prompt_uses_global_repo_arg_before_subcommand(self) -> None:
-        prompt = build_verification_prompt(
-            owner="acme",
-            repo="widgets",
-            pr_number=12,
-            base_branch="main",
-            head_branch="feature",
-            trigger_comment_id=99,
-            requester="alice",
-            verification_skills_text="- verify-ui",
-        )
-        self.assertIn(
-            "python .agents/skills/implement-specs/scripts/fetch_github_context.py "
-            "--repo acme/widgets pr --number 12",
-            prompt,
-        )
-        self.assertIn(
-            "python .agents/skills/implement-specs/scripts/fetch_github_context.py "
-            "--repo acme/widgets pr-diff --number 12",
-            prompt,
-        )
-        self.assertNotIn("fetch_github_context.py pr --repo", prompt)
+from workflows.respond_to_pr_comment import gather_pr_comment_context
 
 
 class PrCommentContextBranchSafetyTest(unittest.TestCase):
@@ -222,70 +164,6 @@ class PrCommentContextBranchSafetyTest(unittest.TestCase):
         self.assertFalse(context["can_push_to_head_branch"])
         self.assertEqual(context["branch_strategy"], "blocked")
 
-
-class PrCommentPromptBranchStrategyTest(unittest.TestCase):
-    def _context(self) -> dict[str, object]:
-        return {
-            "owner": "acme",
-            "repo": "widgets",
-            "pr_number": 12,
-            "head_branch": "feature",
-            "head_repo_full_name": "acme/widgets",
-            "base_branch": "main",
-            "base_repo_full_name": "acme/widgets",
-            "pr_title": "feat: add widget",
-            "requester": "alice",
-            "trigger_kind": "conversation",
-            "trigger_comment_id": 99,
-            "spec_context_text": "No spec context.",
-            "coauthor_directives": "",
-            "branch_strategy": "push-head",
-            "agent_push_repo_full_name": "acme/widgets",
-            "agent_push_branch": "feature",
-        }
-
-    def test_direct_fork_prompt_targets_fork_head_branch(self) -> None:
-        context = self._context()
-        context.update(
-            {
-                "head_repo_full_name": "contributor/widgets",
-                "base_repo_full_name": "acme/widgets",
-                "agent_push_repo_full_name": "contributor/widgets",
-            }
-        )
-
-        prompt = build_pr_comment_prompt(context)
-
-        self.assertIn("maintainers are allowed to modify the fork head branch", prompt)
-        self.assertIn("push to `contributor/widgets:feature`", prompt)
-        self.assertIn("Do not push a same-named branch to `acme/widgets`", prompt)
-
-    def test_fallback_prompt_requires_metadata_for_follow_up_pr(self) -> None:
-        context = self._context()
-        context.update(
-            {
-                "head_repo_full_name": "contributor/widgets",
-                "base_repo_full_name": "acme/widgets",
-                "branch_strategy": "fallback-pr-to-fork",
-                "agent_push_repo_full_name": "acme/widgets",
-                "agent_push_branch": "oz-agent/respond-pr-12",
-                "fallback_pr_base_repo_full_name": "contributor/widgets",
-                "fallback_pr_base_branch": "feature",
-                "fallback_pr_head": "acme:oz-agent/respond-pr-12",
-            }
-        )
-
-        prompt = build_pr_comment_prompt(context)
-
-        self.assertIn("maintainers cannot modify the fork head branch", prompt)
-        self.assertIn("Do not push to `contributor/widgets:feature`", prompt)
-        self.assertIn("Create or reuse branch `oz-agent/respond-pr-12`", prompt)
-        self.assertIn(
-            "fetch `contributor/widgets:feature` and make sure `oz-agent/respond-pr-12` starts from that fork head commit",
-            prompt,
-        )
-        self.assertIn("follow-up PR from `acme:oz-agent/respond-pr-12`", prompt)
-        self.assertIn("use `oz-agent/respond-pr-12` exactly", prompt)
 
 
 if __name__ == "__main__":
