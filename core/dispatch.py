@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Protocol
 
+from oz.attachments import SdkAttachment
 from .routing import RouteDecision
 from .state import RunState, StateStore, save_run_state
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ class DispatchRequest:
     skill_name: str | None
     prompt: str
     payload_subset: dict[str, Any]
+    attachments: tuple[SdkAttachment, ...] = ()
     on_dispatched: Callable[[str], Mapping[str, Any] | None] | None = None
 
 
@@ -145,6 +147,7 @@ class AgentRunner(Protocol):
         config: Mapping[str, Any],
         skill: str | None,
         team: bool,
+        attachments: tuple[SdkAttachment, ...] | None = None,
     ) -> Any: ...
 
 
@@ -189,6 +192,7 @@ def dispatch_run(
         config=config,
         skill=skill,
         team=True,
+        attachments=request.attachments or None,
     )
     run_id = str(getattr(response, "run_id", "") or "")
     if not run_id:

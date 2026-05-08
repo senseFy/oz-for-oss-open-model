@@ -184,7 +184,7 @@ class ReviewWorkflow(BaseWorkflow):
 
     def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch | None:
         from oz.helpers import format_review_start_line  # type: ignore[import-not-found]
-        from workflows.review_pr import build_review_prompt_for_dispatch, gather_review_context  # type: ignore[import-not-found]
+        from workflows import review_pr as review_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
         pr_number = _resolve_pr_number(payload)
@@ -216,7 +216,7 @@ class ReviewWorkflow(BaseWorkflow):
                     MAX_EXPLICIT_REVIEW_INVOCATIONS_PER_PR,
                 )
                 return None
-        context = gather_review_context(
+        context = review_workflow.gather_review_context(
             repo_handle,
             owner=owner,
             repo=repo,
@@ -232,8 +232,12 @@ class ReviewWorkflow(BaseWorkflow):
             config_name=self.config_name,
             title=f"PR review #{pr_number}",
             skill_name=context["skill_name"],
-            prompt=build_review_prompt_for_dispatch(context),
-            payload_subset=dict(context),
+            prompt=review_workflow.build_review_prompt_for_dispatch(context),
+            payload_subset=getattr(
+                review_workflow,
+                "review_payload_subset",
+                lambda ctx: dict(ctx),
+            )(context),
             progress=ProgressCommentSpec(
                 repo_handle=repo_handle,
                 owner=owner,
@@ -247,6 +251,11 @@ class ReviewWorkflow(BaseWorkflow):
                 requester_login=requester,
                 event_payload=payload,
             ),
+            attachments=getattr(
+                review_workflow,
+                "review_context_attachments",
+                lambda ctx: [],
+            )(context),
         )
 
     def load_artifact(self, run_id: str) -> dict[str, Any]:
@@ -280,7 +289,7 @@ class RespondWorkflow(BaseWorkflow):
         return True
 
     def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch | None:
-        from workflows.respond_to_pr_comment import build_pr_comment_prompt, gather_pr_comment_context  # type: ignore[import-not-found]
+        from workflows import respond_to_pr_comment as respond_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
         pr_number = _resolve_pr_number(payload)
@@ -290,7 +299,7 @@ class RespondWorkflow(BaseWorkflow):
         repo_handle = github_client.get_repo(full_name)
         pr = repo_handle.get_pull(pr_number)
         review_reply_target = _resolve_review_reply_target(payload, pr)
-        context = gather_pr_comment_context(
+        context = respond_workflow.gather_pr_comment_context(
             repo_handle,
             owner=owner,
             repo=repo,
@@ -313,8 +322,12 @@ class RespondWorkflow(BaseWorkflow):
             config_name=self.config_name,
             title=f"Respond to PR comment #{pr_number}",
             skill_name="implement-issue",
-            prompt=build_pr_comment_prompt(context),
-            payload_subset=dict(context),
+            prompt=respond_workflow.build_pr_comment_prompt(context),
+            payload_subset=getattr(
+                respond_workflow,
+                "pr_comment_payload_subset",
+                lambda ctx: dict(ctx),
+            )(context),
             progress=ProgressCommentSpec(
                 repo_handle=repo_handle,
                 owner=owner,
@@ -326,6 +339,11 @@ class RespondWorkflow(BaseWorkflow):
                 event_payload=payload,
                 review_reply_target=review_reply_target,
             ),
+            attachments=getattr(
+                respond_workflow,
+                "pr_comment_context_attachments",
+                lambda ctx: [],
+            )(context),
         )
 
     def _review_reply_target_for_state(self, state: RunState, repo_handle: Any) -> tuple[Any, int] | None:
@@ -363,14 +381,14 @@ class VerifyWorkflow(BaseWorkflow):
     config_name = WORKFLOW_VERIFY_PR_COMMENT
 
     def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
-        from workflows.verify_pr_comment import build_verification_prompt, gather_verify_context  # type: ignore[import-not-found]
+        from workflows import verify_pr_comment as verify_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
         pr_number = _resolve_pr_number(payload)
         requester = _resolve_requester(payload)
         trigger_comment_id = _resolve_trigger_comment_id(payload)
         repo_handle = github_client.get_repo(full_name)
-        context = gather_verify_context(
+        context = verify_workflow.gather_verify_context(
             repo_handle,
             owner=owner,
             repo=repo,
@@ -379,7 +397,7 @@ class VerifyWorkflow(BaseWorkflow):
             requester=requester,
             workspace_path=workspace_path or Path("/tmp"),
         )
-        prompt = build_verification_prompt(
+        prompt = verify_workflow.build_verification_prompt(
             owner=context["owner"],
             repo=context["repo"],
             pr_number=context["pr_number"],
@@ -397,7 +415,11 @@ class VerifyWorkflow(BaseWorkflow):
             title=f"Verify PR #{pr_number}",
             skill_name="verify-pr",
             prompt=prompt,
-            payload_subset=dict(context),
+            payload_subset=getattr(
+                verify_workflow,
+                "verify_payload_subset",
+                lambda ctx: dict(ctx),
+            )(context),
             progress=ProgressCommentSpec(
                 repo_handle=repo_handle,
                 owner=owner,
@@ -408,6 +430,11 @@ class VerifyWorkflow(BaseWorkflow):
                 requester_login=requester,
                 event_payload=payload,
             ),
+            attachments=getattr(
+                verify_workflow,
+                "verify_context_attachments",
+                lambda ctx: [],
+            )(context),
         )
 
     def load_artifact(self, run_id: str) -> dict[str, Any]:
@@ -439,14 +466,14 @@ class TriageWorkflow(BaseWorkflow):
 
     def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
         from oz.helpers import format_triage_start_line, triggering_comment_prompt_text  # type: ignore[import-not-found]
-        from workflows.triage_new_issues import build_triage_prompt_for_dispatch, gather_triage_context  # type: ignore[import-not-found]
+        from workflows import triage_new_issues as triage_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
         issue_number = _resolve_issue_number(payload)
         requester = _resolve_requester(payload)
         trigger_comment_id = _resolve_trigger_comment_id(payload)
         repo_handle = github_client.get_repo(full_name)
-        context = gather_triage_context(
+        context = triage_workflow.gather_triage_context(
             repo_handle,
             owner=owner,
             repo=repo,
@@ -462,8 +489,12 @@ class TriageWorkflow(BaseWorkflow):
             config_name=self.config_name,
             title=f"Triage issue #{issue_number}",
             skill_name="triage-issue",
-            prompt=build_triage_prompt_for_dispatch(context, repo_handle=repo_handle),
-            payload_subset=dict(context),
+            prompt=triage_workflow.build_triage_prompt_for_dispatch(context, repo_handle=repo_handle),
+            payload_subset=getattr(
+                triage_workflow,
+                "triage_payload_subset",
+                lambda ctx: dict(ctx),
+            )(context),
             progress=ProgressCommentSpec(
                 repo_handle=repo_handle,
                 owner=owner,
@@ -474,6 +505,11 @@ class TriageWorkflow(BaseWorkflow):
                 requester_login=requester,
                 event_payload=payload,
             ),
+            attachments=getattr(
+                triage_workflow,
+                "triage_context_attachments",
+                lambda ctx: [],
+            )(context),
         )
 
     def load_artifact(self, run_id: str) -> dict[str, Any]:
@@ -499,18 +535,14 @@ class CreateSpecWorkflow(BaseWorkflow):
 
     def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
         from oz.helpers import triggering_comment_prompt_text  # type: ignore[import-not-found]
-        from workflows.create_spec_from_issue import (
-            SPEC_DRIVEN_IMPLEMENTATION_SKILL,
-            build_create_spec_prompt_for_dispatch,
-            gather_create_spec_context,
-        )  # type: ignore[import-not-found]
+        from workflows import create_spec_from_issue as create_spec_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
         issue_number = _resolve_issue_number(payload)
         requester = _resolve_requester(payload)
         trigger_comment_id = _resolve_trigger_comment_id(payload)
         repo_handle = github_client.get_repo(full_name)
-        context = gather_create_spec_context(
+        context = create_spec_workflow.gather_create_spec_context(
             repo_handle,
             owner=owner,
             repo=repo,
@@ -527,9 +559,13 @@ class CreateSpecWorkflow(BaseWorkflow):
             installation_id=_resolve_installation_id(payload),
             config_name=self.config_name,
             title=f"Create specs for issue #{issue_number}",
-            skill_name=SPEC_DRIVEN_IMPLEMENTATION_SKILL,
-            prompt=build_create_spec_prompt_for_dispatch(context),
-            payload_subset=dict(context),
+            skill_name=create_spec_workflow.SPEC_DRIVEN_IMPLEMENTATION_SKILL,
+            prompt=create_spec_workflow.build_create_spec_prompt_for_dispatch(context),
+            payload_subset=getattr(
+                create_spec_workflow,
+                "create_spec_payload_subset",
+                lambda ctx: dict(ctx),
+            )(context),
             progress=ProgressCommentSpec(
                 repo_handle=repo_handle,
                 owner=owner,
@@ -540,6 +576,11 @@ class CreateSpecWorkflow(BaseWorkflow):
                 requester_login=requester,
                 event_payload=payload,
             ),
+            attachments=getattr(
+                create_spec_workflow,
+                "create_spec_context_attachments",
+                lambda ctx: [],
+            )(context),
         )
 
     def apply_result(self, repo_handle: Any, *, context: Mapping[str, Any], run: Any, result: Mapping[str, Any], progress: Any, github_client: Any | None = None) -> None:
@@ -554,17 +595,13 @@ class CreateImplementationWorkflow(BaseWorkflow):
 
     def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
         from oz.helpers import triggering_comment_prompt_text  # type: ignore[import-not-found]
-        from workflows.create_implementation_from_issue import (
-            IMPLEMENT_SPECS_SKILL,
-            build_create_implementation_prompt_for_dispatch,
-            gather_create_implementation_context,
-        )  # type: ignore[import-not-found]
+        from workflows import create_implementation_from_issue as implementation_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
         issue_number = _resolve_issue_number(payload)
         requester = _resolve_requester(payload)
         repo_handle = github_client.get_repo(full_name)
-        context = gather_create_implementation_context(
+        context = implementation_workflow.gather_create_implementation_context(
             repo_handle,
             owner=owner,
             repo=repo,
@@ -581,9 +618,13 @@ class CreateImplementationWorkflow(BaseWorkflow):
             installation_id=_resolve_installation_id(payload),
             config_name=self.config_name,
             title=f"Implement issue #{issue_number}",
-            skill_name=IMPLEMENT_SPECS_SKILL,
-            prompt=build_create_implementation_prompt_for_dispatch(context),
-            payload_subset=dict(context),
+            skill_name=implementation_workflow.IMPLEMENT_SPECS_SKILL,
+            prompt=implementation_workflow.build_create_implementation_prompt_for_dispatch(context),
+            payload_subset=getattr(
+                implementation_workflow,
+                "create_implementation_payload_subset",
+                lambda ctx: dict(ctx),
+            )(context),
             progress=ProgressCommentSpec(
                 repo_handle=repo_handle,
                 owner=owner,
@@ -594,6 +635,11 @@ class CreateImplementationWorkflow(BaseWorkflow):
                 requester_login=requester,
                 event_payload=payload,
             ),
+            attachments=getattr(
+                implementation_workflow,
+                "create_implementation_context_attachments",
+                lambda ctx: [],
+            )(context),
         )
 
     def apply_result(self, repo_handle: Any, *, context: Mapping[str, Any], run: Any, result: Mapping[str, Any], progress: Any, github_client: Any | None = None) -> None:
@@ -608,11 +654,7 @@ class PlanApprovedWorkflow(CreateImplementationWorkflow):
 
     def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
         from oz.helpers import resolve_issue_number_for_pr  # type: ignore[import-not-found]
-        from workflows.create_implementation_from_issue import (
-            IMPLEMENT_SPECS_SKILL,
-            build_create_implementation_prompt_for_dispatch,
-            gather_create_implementation_context,
-        )  # type: ignore[import-not-found]
+        from workflows import create_implementation_from_issue as implementation_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
         requester = _resolve_requester(payload)
@@ -629,7 +671,7 @@ class PlanApprovedWorkflow(CreateImplementationWorkflow):
             if not resolved:
                 raise ValueError(f"plan-approved PR #{pr_number} has no resolvable linked issue")
             issue_number = int(resolved)
-        context = gather_create_implementation_context(
+        context = implementation_workflow.gather_create_implementation_context(
             repo_handle,
             owner=owner,
             repo=repo,
@@ -640,7 +682,11 @@ class PlanApprovedWorkflow(CreateImplementationWorkflow):
             workspace_path=workspace_path or Path("/tmp"),
             github_client=github_client,
         )
-        payload_subset = dict(context)
+        payload_subset = getattr(
+            implementation_workflow,
+            "create_implementation_payload_subset",
+            lambda ctx: dict(ctx),
+        )(context)
         payload_subset["trigger_source"] = "plan-approved"
         return WorkflowDispatch(
             workflow=self.workflow,
@@ -648,8 +694,8 @@ class PlanApprovedWorkflow(CreateImplementationWorkflow):
             installation_id=_resolve_installation_id(payload),
             config_name=self.config_name,
             title=f"Implement issue #{issue_number} (plan-approved)",
-            skill_name=IMPLEMENT_SPECS_SKILL,
-            prompt=build_create_implementation_prompt_for_dispatch(context),
+            skill_name=implementation_workflow.IMPLEMENT_SPECS_SKILL,
+            prompt=implementation_workflow.build_create_implementation_prompt_for_dispatch(context),
             payload_subset=payload_subset,
             progress=ProgressCommentSpec(
                 repo_handle=repo_handle,
@@ -661,6 +707,11 @@ class PlanApprovedWorkflow(CreateImplementationWorkflow):
                 requester_login=requester,
                 event_payload=payload,
             ),
+            attachments=getattr(
+                implementation_workflow,
+                "create_implementation_context_attachments",
+                lambda ctx: [],
+            )(context),
         )
 
     def progress_for_state(self, repo_handle: Any, *, state: RunState) -> Any:

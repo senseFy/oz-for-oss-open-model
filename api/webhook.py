@@ -427,7 +427,7 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
         base_url=os.environ["WARP_API_BASE_URL"],
     )
 
-    def runner(*, prompt, title, config, skill, team):
+    def runner(*, prompt, title, config, skill, team, attachments=None):
         request = {
             "prompt": prompt,
             "title": title,
@@ -436,6 +436,8 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
         }
         if skill:
             request["skill"] = skill
+        if attachments:
+            request["attachments"] = tuple(attachments)
         return sdk_client.agent.run(**request)
 
     from pathlib import Path as _Path
