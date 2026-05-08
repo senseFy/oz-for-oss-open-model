@@ -13,7 +13,7 @@ Provide a focused security pass on top of the general spec review. This is a sup
 
 The focus here is high-level design concerns that a security-minded reader would raise on a product or tech spec, not line-by-line code issues. Flag gaps, ambiguities, or design choices that would plausibly lead to an insecure implementation if built as described.
 
-## Context
+## Inputs
 
 - The working directory is the PR branch checkout.
 - The workflow usually provides an annotated diff in `pr_diff.txt`.
@@ -77,7 +77,7 @@ Evaluate the changed spec content against the following concerns. Treat the list
 - Specs that introduce security-relevant operations (auth, secret use, privileged actions) without describing what is logged, how logs are protected, and how an operator would notice abuse.
 - Missing discussion of how to detect and respond to the specific failure modes introduced by the feature.
 
-## How to evaluate
+## Process
 
 1. Read `pr_description.txt` and `pr_diff.txt` to understand the scope and intent of the spec change.
 2. For each changed section, ask: if this were implemented as written, which of the concerns above would a security-minded reviewer raise?
@@ -87,7 +87,7 @@ Evaluate the changed spec content against the following concerns. Treat the list
 6. Do not repeat findings already covered by the base review; if the base pass would naturally catch it, leave it there.
 7. Do not treat a spec as insecure just because it does not exhaustively enumerate every threat. Focus on concerns that would plausibly lead to an insecure implementation or a missed mitigation.
 
-## How to report findings
+## Outputs
 
 - Do not create a separate report file.
 - Fold security findings into the same `review.json` produced by `review-spec`.

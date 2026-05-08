@@ -7,7 +7,7 @@ description: Review a pull request diff and write structured feedback to review.
 
 Review the current pull request and write the output to `review.json`.
 
-## Context
+## Inputs
 
 - The working directory is the PR branch checkout.
 - The workflow usually provides an annotated diff in `pr_diff.txt`.
@@ -17,7 +17,7 @@ Review the current pull request and write the output to `review.json`.
 - Focus on files and lines changed by this PR.
 - Default behavior: do not post comments or reviews to GitHub directly.
 
-## Review Scope
+## Process
 
 - Prioritize correctness, security, error handling, and meaningful performance issues.
 - Always apply the repository's local `security-review-pr` skill as a supplemental security pass on code PRs. Fold any security findings into the same `review.json` produced by this review rather than emitting a separate output.
@@ -80,7 +80,7 @@ Rules:
 - When unsure of the surrounding context, widen `start_line`/`line` to include enough real lines from the diff rather than guessing at surrounding tokens.
 - For multi-line suggestions, set `start_line` and `start_side` to the first line, and `line` and `side` to the last line.
 
-## Output Format
+## Outputs
 
 Create `review.json` with this shape:
 
@@ -129,32 +129,7 @@ Before finishing:
     ```
     python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff pr_diff.txt
     ```
-  If the script reports any invalid comments, fix `review.json` and rerun it. Do not upload `review.json` until this validator passes. If the script path is not present at that exact location, locate `validate_review_json.py` under the loaded `review-pr` skill directory and run that copy with the same arguments.
+  If the script reports any invalid comments, fix `review.json` and rerun it. Do not finish until this validator passes. If the script path is not present at that exact location, locate `validate_review_json.py` under the loaded `review-pr` skill directory and run that copy with the same arguments.
 - Do not run `gh pr review`, `gh pr comment`, `gh api`, or any other command that posts to GitHub.
 
 Your only output is the final `review.json`.
-
-## Cloud workflow mode
-
-If the prompt says you are in a cloud-environment workflow and the expected local context files are missing:
-
-- Create `pr_description.txt` yourself from the PR body or GitHub metadata provided in the prompt.
-- Fetch and check out the exact PR head branch by name before generating the diff. Run:
-    ```
-    git fetch origin <head_branch>
-    git checkout <head_branch>
-    ```
-  Do NOT use `FETCH_HEAD` — always reference the named branch.
-- Generate the diff against the base branch using a three-dot merge-base diff:
-    ```
-    git diff origin/<base_branch>...HEAD
-    ```
-  This isolates only the changes introduced by the PR, not accumulated state from other branches.
-- Convert the raw diff into `pr_diff.txt` using the annotated format above before reviewing.
-- If the prompt provides a `resolve_spec_context.py` command, run it only when spec validation is needed and write any returned spec content to `spec_context.md` before running review.
-- Still produce `review.json` and validate it with `jq`.
-- When the host already populated `pr_description.txt`, `pr_diff.txt`, or `spec_context.md` in the workflow checkout, use those files as-is and do not try to re-fetch GitHub context yourself.
-- When the prompt inlines the annotated PR diff instead of providing `pr_diff.txt`, write the inlined diff to `pr_diff.txt` exactly before validating `review.json`.
-- The cloud run does not receive `GH_TOKEN`. If the host did not pre-materialize the needed context, follow only the prompt's explicit fallback instructions.
-- After `validate_review_json.py` passes, upload the result via `oz artifact upload review.json` (or `oz-preview artifact upload review.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. Do not write `review.json` to a `/mnt/...` mount path — the cloud agent has no such mount, and the host workflow only reads what you upload through the artifact CLI.
-- IMPORTANT: the upload subcommand is `artifact` (singular) on both `oz` and `oz-preview`. Do not use `artifacts` (plural) — that is not a valid subcommand and will fail.

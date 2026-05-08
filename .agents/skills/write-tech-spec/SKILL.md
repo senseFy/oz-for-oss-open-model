@@ -37,7 +37,7 @@ Prefer to have a product spec first so the technical plan is anchored to agreed 
 
 If the implementation is still too uncertain, it can be better to build an end-to-end prototype first and then write the tech spec from what was learned. Do not force a speculative tech spec when the prototype is the fastest way to reduce ambiguity.
 
-## Research before writing
+## Inputs
 
 Before drafting the tech spec:
 
@@ -49,7 +49,7 @@ Before drafting the tech spec:
 
 Do not guess about current architecture when the code can be inspected directly.
 
-## What to write
+## Outputs
 
 Use the following structure:
 
@@ -97,7 +97,7 @@ List the tests and other verification needed to show the implementation matches 
 
 Note deferred cleanup, extensions, or future work that should not block the current implementation.
 
-## Writing guidance
+## Process
 
 - Ground the plan in actual codebase structure and patterns.
 - Prefer concrete implementation guidance over generic architecture language.
