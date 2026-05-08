@@ -413,7 +413,7 @@ def build_pr_comment_prompt(context: Mapping[str, Any]) -> str:
           - {metadata_branch_line}
           - `pr_title`: a conventional-commit-style PR title that reflects the PR's current combined scope (e.g. `feat: add retry logic for transient API failures` when implementation has been added on top of a spec PR).
           - `pr_summary`: the full markdown PR body reflecting the PR's current combined scope. When the original PR body started with `Closes #<issue_number>` or `Fixes #<issue_number>`, preserve that line at the top so GitHub still auto-closes the linked issue when the PR merges.
-        - After writing `pr-metadata.json`, leave it at the repository root for the workflow to collect.
+        - After writing `pr-metadata.json`, upload it as an Oz run artifact via `oz artifact upload pr-metadata.json` (or `oz-preview artifact upload pr-metadata.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
         - If your changes are minor tweaks that do not change the PR's scope (for example, fixing a typo in a spec, adjusting wording, or small bug fixes within the PR's existing scope), do not write `pr-metadata.json`. Leaving it out signals that the existing PR title and description should remain unchanged.
 
         Resolved Review Comment Reporting:
@@ -428,7 +428,7 @@ def build_pr_comment_prompt(context: Mapping[str, Any]) -> str:
           }}
         - Each `summary` must be a short, reviewer-facing explanation (1-3 sentences) describing what changed.
         - Validate the JSON with `jq` after writing it.
-        - Leave it at the repository root for the workflow to collect.
+        - Upload it as an Oz run artifact via `oz artifact upload resolved_review_comments.json` (or `oz-preview artifact upload resolved_review_comments.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
         - Do not create the file when no review comments were resolved. Omitting the file is the correct signal that no review threads need to be closed.
         {coauthor_directives}
         """

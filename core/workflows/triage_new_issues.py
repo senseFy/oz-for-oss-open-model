@@ -246,7 +246,7 @@ def build_triage_prompt(
         - Populate `issue_body` with the markdown triage summary that should be posted as a separate issue comment. Do not rewrite the original issue description, and do not include HTML metadata in `issue_body`.
         - Validate `triage_result.json` with `jq`.
         - Do not create issue comments or make other GitHub changes.
-        - After validating the JSON, leave `triage_result.json` at the repository root for the workflow to collect.
+        - After validating the JSON, upload `triage_result.json` as an Oz run artifact via `oz artifact upload triage_result.json` (or `oz-preview artifact upload triage_result.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
         """
     ).strip()
     # Append the fenced repo-local references after the base prompt so a

@@ -155,7 +155,7 @@ def build_verification_prompt(
         - Verify the code on branch `{head_branch}`. Fetch the branch and run your verification work against that branch rather than against the default branch.
         - Read and execute every discovered verification skill listed above. Do not silently skip a listed skill.
         - If a skill cannot be completed, record that clearly in the verification report.
-        - If verification creates screenshots, images, videos, or other reviewer-useful files, make them available as run artifacts for the workflow to collect.
+        - If verification creates screenshots, images, videos, or other reviewer-useful files, upload them as Oz run artifacts via `oz artifact upload <path>` (or `oz-preview artifact upload <path>` if the `oz` CLI is not available).
         - Do not commit, push, edit the pull request, or post GitHub comments yourself.
 
         Report Output:
@@ -174,7 +174,7 @@ def build_verification_prompt(
           }}
         - Include one `skills` entry for every discovered verification skill listed above.
         - Validate `verification_report.json` with `jq`.
-        - Leave `verification_report.json` at the repository root for the workflow to collect.
+        - After validating, upload `verification_report.json` as an Oz run artifact via `oz artifact upload verification_report.json` (or `oz-preview artifact upload verification_report.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
         """
     ).strip()
 
