@@ -1714,7 +1714,6 @@ def _normalize_github_linked_issue(node: Any, *, source: str) -> dict[str, Any] 
         "source": source,
     }
 
-
 def _graphql_pull_request_data(
     requester: Any,
     query: str,
@@ -1967,9 +1966,10 @@ def resolve_issue_number_for_pr(
 
 
 def is_spec_only_pr(changed_files: list[str]) -> bool:
-    """Return True when every changed file lives under ``specs/``."""
+    """Return True when a PR contains only spec files."""
     return bool(changed_files) and all(
-        filename.startswith("specs/") for filename in changed_files
+        filename.startswith("specs/")
+        for filename in changed_files
     )
 
 

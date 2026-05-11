@@ -71,6 +71,17 @@ def _resolve_issue_number(payload: Mapping[str, Any]) -> int:
     raise ValueError("payload does not include an issue number")
 
 
+def _resolve_linked_issue_numbers(payload: Mapping[str, Any]) -> list[int]:
+    raw = payload.get("linked_issue_number")
+    try:
+        number = int(raw or 0)
+    except (TypeError, ValueError):
+        return []
+    if number <= 0:
+        return []
+    return [number]
+
+
 def _resolve_requester(payload: Mapping[str, Any]) -> str:
     comment = payload.get("comment")
     if isinstance(comment, dict):
@@ -191,10 +202,11 @@ class ReviewWorkflow(BaseWorkflow):
         requester = _resolve_requester(payload)
         trigger_source = _resolve_trigger_source(payload)
         repo_handle = github_client.get_repo(full_name)
+        pr = repo_handle.get_pull(pr_number)
         if _is_explicit_review_invocation(payload):
             try:
                 invocation_count = _explicit_review_invocation_count(
-                    repo_handle.get_pull(pr_number)
+                    pr
                 )
             except Exception:
                 # Fail open: if the throttle lookup itself fails for any
@@ -216,6 +228,15 @@ class ReviewWorkflow(BaseWorkflow):
                     MAX_EXPLICIT_REVIEW_INVOCATIONS_PER_PR,
                 )
                 return None
+        if not review_workflow.enforce_pr_issue_state_for_review(
+            repo_handle,
+            owner=owner,
+            repo=repo,
+            pr=pr,
+            requester=requester,
+            explicit_issue_numbers=_resolve_linked_issue_numbers(payload),
+        ):
+            return None
         context = review_workflow.gather_review_context(
             repo_handle,
             owner=owner,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import fnmatch
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, Mapping, TypedDict
@@ -8,10 +9,15 @@ from github.File import File
 from github.GithubException import GithubException
 from github.Repository import Repository
 from oz.helpers import (
+    build_comment_body,
+    comment_metadata,
+    get_field,
+    get_label_name,
     is_automation_user,
     is_spec_only_pr,
     ORG_MEMBER_ASSOCIATIONS,
     POWERED_BY_SUFFIX,
+    resolve_pr_association,
     resolve_issue_number_for_pr,
     resolve_spec_context_for_pr_via_api,
     WorkflowProgressComment,
@@ -56,6 +62,10 @@ _REVIEW_ATTACHMENT_PAYLOAD_FIELDS = {
     "repo_local_section",
     "non_member_review_section",
 }
+_READY_TO_SPEC_LABEL = "ready-to-spec"
+_READY_TO_IMPLEMENT_LABEL = "ready-to-implement"
+_ENFORCEMENT_COMMENT_RUN_ID = "pr-issue-state-enforcement"
+_READY_LABELS = frozenset({_READY_TO_SPEC_LABEL, _READY_TO_IMPLEMENT_LABEL})
 
 # Allowed values for the agent-supplied ``verdict`` field on ``review.json``.
 _VERDICT_APPROVE = "APPROVE"
@@ -108,6 +118,255 @@ def _is_non_member_pr(pr: Any) -> bool:
     if not normalized:
         return False
     return normalized not in ORG_MEMBER_ASSOCIATIONS
+
+
+def _same_repo_issue_numbers_from_refs(
+    owner: str,
+    repo: str,
+    refs: list[dict[str, Any]],
+) -> list[int]:
+    normalized_owner = owner.lower()
+    normalized_repo = repo.lower()
+    numbers: list[int] = []
+    for ref in refs:
+        if str(ref.get("owner") or "").lower() != normalized_owner:
+            continue
+        if str(ref.get("repo") or "").lower() != normalized_repo:
+            continue
+        try:
+            numbers.append(int(ref["number"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return list(dict.fromkeys(numbers))
+
+
+def _issue_label_names(issue: Any) -> list[str]:
+    return [
+        name
+        for name in (get_label_name(label).strip() for label in get_field(issue, "labels", []) or [])
+        if name
+    ]
+
+
+@dataclass(frozen=True)
+class IssueReadinessStatus:
+    """Structured result from checking a single issue's readiness labels."""
+
+    number: int
+    labels: list[str]
+    readiness_labels: list[str]
+    has_required_label: bool
+    is_pull_request: bool
+
+
+def _issue_readiness_status(
+    github: Repository,
+    issue_number: int,
+    *,
+    required_label: str,
+) -> IssueReadinessStatus | None:
+    try:
+        issue = github.get_issue(issue_number)
+    except Exception:
+        logger.exception(
+            "review-pr: failed to fetch associated issue #%s during issue-state enforcement",
+            issue_number,
+        )
+        return None
+    labels = _issue_label_names(issue)
+    readiness_labels = [label for label in labels if label in _READY_LABELS]
+    is_pull_request = bool(get_field(issue, "pull_request", None))
+    return IssueReadinessStatus(
+        number=issue_number,
+        labels=labels,
+        readiness_labels=readiness_labels,
+        has_required_label=required_label in labels and not is_pull_request,
+        is_pull_request=is_pull_request,
+    )
+
+
+def check_pr_issue_state_for_review(
+    github: Repository,
+    *,
+    owner: str,
+    repo: str,
+    pr: Any,
+    changed_files: list[str],
+    explicit_issue_numbers: list[int] | None = None,
+) -> dict[str, Any]:
+    """Return the deterministic issue-state gate result for a review PR."""
+    spec_only = is_spec_only_pr(changed_files)
+    required_label = _READY_TO_SPEC_LABEL if spec_only else _READY_TO_IMPLEMENT_LABEL
+    association = resolve_pr_association(github, owner, repo, pr, changed_files)
+    github_linked_issue_numbers = _same_repo_issue_numbers_from_refs(
+        owner,
+        repo,
+        association.get("github_linked_issues") or [],
+    )
+    issue_numbers = list(
+        dict.fromkeys(
+            list(explicit_issue_numbers or [])
+            + github_linked_issue_numbers
+        )
+    )
+    issue_statuses = [
+        status
+        for issue_number in issue_numbers
+        if (
+            status := _issue_readiness_status(
+                github,
+                issue_number,
+                required_label=required_label,
+            )
+        )
+        is not None
+    ]
+    ready_issue_numbers = [
+        status.number
+        for status in issue_statuses
+        if status.has_required_label
+    ]
+    return {
+        "allowed": bool(ready_issue_numbers),
+        "spec_only": spec_only,
+        "required_label": required_label,
+        "association": association,
+        "issue_numbers": issue_numbers,
+        "issue_statuses": issue_statuses,
+        "ready_issue_numbers": ready_issue_numbers,
+    }
+
+
+def _format_issue_numbers(numbers: list[int]) -> str:
+    return ", ".join(f"#{number}" for number in numbers)
+
+
+def _format_issue_status(status: IssueReadinessStatus, *, required_label: str) -> str:
+    readiness_text = (
+        ", ".join(f"`{label}`" for label in status.readiness_labels)
+        if status.readiness_labels
+        else "none"
+    )
+    if status.is_pull_request:
+        state = "is a pull request, not an issue"
+    elif status.has_required_label:
+        state = f"has `{required_label}`"
+    else:
+        state = f"missing `{required_label}`"
+    return f"- #{status.number}: {state}; readiness labels present: {readiness_text}"
+
+
+def _format_pr_issue_state_failure_message(
+    check: Mapping[str, Any],
+    *,
+    requester: str,
+) -> str:
+    required_label = str(check["required_label"])
+    issue_numbers = [int(number) for number in check.get("issue_numbers") or []]
+    associated_text = _format_issue_numbers(issue_numbers) if issue_numbers else "none"
+    opening = (
+        f"This PR is not linked to an issue that is marked with `{required_label}`."
+    )
+    sections: list[str] = []
+    normalized_requester = requester.strip().removeprefix("@")
+    if normalized_requester:
+        sections.append(f"@{normalized_requester}")
+    sections.extend(
+        [
+            opening,
+            "Issue-state enforcement details:",
+            f"- Associated same-repo issues checked: {associated_text}",
+            f"- Required readiness label: `{required_label}`",
+        ]
+    )
+    statuses = check.get("issue_statuses") or []
+    if statuses:
+        sections.append("Readiness check:")
+        sections.extend(
+            _format_issue_status(status, required_label=required_label)
+            for status in statuses
+        )
+    sections.append(
+        f"To continue, link this PR to a same-repo issue such as `Closes #123` "
+        f"in the PR description, and make sure that issue has `{required_label}`."
+    )
+    return "\n\n".join(sections)
+
+
+def _upsert_pr_issue_state_enforcement_comment(
+    github: Repository,
+    *,
+    pr_number: int,
+    body: str,
+) -> None:
+    metadata = comment_metadata(
+        WORKFLOW_NAME,
+        pr_number,
+        run_id=_ENFORCEMENT_COMMENT_RUN_ID,
+    )
+    comment_body = build_comment_body(body, metadata)
+    issue = github.get_issue(pr_number)
+    for comment in issue.get_comments():
+        if metadata in str(get_field(comment, "body", "") or ""):
+            comment.edit(comment_body)
+            return
+    issue.create_comment(comment_body)
+
+
+def enforce_pr_issue_state_for_review(
+    github: Repository,
+    *,
+    owner: str,
+    repo: str,
+    pr: Any,
+    requester: str,
+    explicit_issue_numbers: list[int] | None = None,
+) -> bool:
+    """Post a REQUEST_CHANGES review and return False when review is blocked.
+
+    Enforcement is skipped for org members/collaborators — only external
+    contributors are required to link a ready issue.
+    """
+    if not _is_non_member_pr(pr):
+        return True
+    files = list(pr.get_files())
+    changed_files = [str(file.filename) for file in files]
+    check = check_pr_issue_state_for_review(
+        github,
+        owner=owner,
+        repo=repo,
+        pr=pr,
+        changed_files=changed_files,
+        explicit_issue_numbers=explicit_issue_numbers,
+    )
+    if check["allowed"]:
+        return True
+    pr_number = int(get_field(pr, "number") or 0)
+    if pr_number <= 0:
+        logger.warning(
+            "review-pr: cannot post issue-state enforcement review without a PR number"
+        )
+        return False
+    failure_body = _format_pr_issue_state_failure_message(
+        check,
+        requester=requester,
+    )
+    _upsert_pr_issue_state_enforcement_comment(
+        github,
+        pr_number=pr_number,
+        body=failure_body,
+    )
+    review_body = f"{failure_body}\n\n{POWERED_BY_SUFFIX}"
+    try:
+        pr.create_review(body=review_body, event="REQUEST_CHANGES")
+    except Exception:
+        logger.exception(
+            "review-pr: failed to post REQUEST_CHANGES enforcement review for %s/%s PR #%s",
+            owner,
+            repo,
+            pr_number,
+        )
+    return False
 
 
 def _stakeholder_logins(entries: list[dict[str, Any]]) -> set[str]:
