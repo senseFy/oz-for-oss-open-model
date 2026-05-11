@@ -1,4 +1,6 @@
 from __future__ import annotations
+import base64
+import json
 
 import unittest
 from datetime import datetime, timezone
@@ -31,6 +33,7 @@ from core.workflows.triage_new_issues import (
     extract_response_body,
     extract_response_details,
     extract_statements,
+    triage_context_attachments,
     _follow_up_comment_metadata,
     _duplicate_comment_metadata,
     extract_requested_labels,
@@ -389,6 +392,57 @@ class FormatIssueCommentsTest(unittest.TestCase):
         )
         self.assertIn("Human context", rendered)
         self.assertIn("oz-agent-metadata", rendered)
+
+class TriageContextAttachmentsTest(unittest.TestCase):
+    def test_keeps_triage_context_within_attachment_limit(self) -> None:
+        attachments = triage_context_attachments(
+            {
+                "issue_body": "Issue body",
+                "original_report": "Original report",
+                "comments_text": "- @alice: more context",
+                "triggering_comment_text": "@oz-agent please re-triage",
+                "triage_config": {"labels": {"bug": {"color": "D73A4A"}}},
+                "template_context": {
+                    "templates": [
+                        {
+                            "path": ".github/ISSUE_TEMPLATE/bug.yml",
+                            "content": "name: Bug",
+                        }
+                    ]
+                },
+            }
+        )
+
+        self.assertEqual(len(attachments), 5)
+        self.assertEqual(
+            [attachment["file_name"] for attachment in attachments],
+            [
+                "issue_body.md",
+                "original_issue_report.md",
+                "issue_comments.md",
+                "triggering_comment.md",
+                "repository_triage_context.json",
+            ],
+        )
+        repo_context_attachment = attachments[-1]
+        self.assertEqual(repo_context_attachment["mime_type"], "application/json")
+        repo_context = json.loads(
+            base64.b64decode(repo_context_attachment["data"]).decode("utf-8")
+        )
+        self.assertEqual(
+            repo_context,
+            {
+                "triage_config": {"labels": {"bug": {"color": "D73A4A"}}},
+                "template_context": {
+                    "templates": [
+                        {
+                            "path": ".github/ISSUE_TEMPLATE/bug.yml",
+                            "content": "name: Bug",
+                        }
+                    ]
+                },
+            },
+        )
 
 
 
