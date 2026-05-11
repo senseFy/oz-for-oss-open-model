@@ -58,4 +58,3 @@ Rules:
 - `skills` must contain one entry for every discovered verification skill.
 - Each `status` must be one of `passed`, `failed`, `mixed`, or `skipped`.
 - Validate the JSON with `jq`.
-- Leave any screenshots, videos, images, or supporting files in the paths described by the verification report so the workflow can collect them.

@@ -8,6 +8,8 @@ __pycache__/
 .vercel/
 triage_result.json
 review.json
+verification_report.json
+resolved_review_comments.json
 pr_diff.txt
 pr_description.txt
 spec_context.md
@@ -16,6 +18,11 @@ pr_description.md
 pr-metadata.json
 issue_comments.txt
 issue_comments.md
+issue_body.md
+original_issue_report.md
+triggering_comment.md
+repository_triage_context.json
+verification_skills.md
 .vercel
 .env*.local
 .DS_Store

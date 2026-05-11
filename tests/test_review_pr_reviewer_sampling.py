@@ -19,6 +19,7 @@ from workflows.review_pr import (  # type: ignore[import-not-found]
     _stakeholder_pattern_matches,
     _team_slug_only,
     apply_review_result,
+    review_payload_subset,
     RETRIGGER_HINT,
 )
 from oz.helpers import POWERED_BY_SUFFIX
@@ -194,6 +195,32 @@ class ParseVerdictTest(unittest.TestCase):
     def test_non_string_verdict_defaults_to_approve(self) -> None:
         self.assertEqual(_parse_verdict({"verdict": 1}), "APPROVE")
         self.assertEqual(_parse_verdict({"verdict": None}), "APPROVE")
+
+
+class ReviewPayloadSubsetTest(unittest.TestCase):
+    def test_drops_prompt_only_attachment_payload_fields(self) -> None:
+        subset = review_payload_subset(
+            {
+                "owner": "acme",
+                "repo": "widgets",
+                "pr_body": "large untrusted PR body",
+                "pr_description_text": "rendered PR description",
+                "pr_diff_text": "annotated diff",
+                "spec_context_text": "spec context",
+                "repo_local_section": "local guidance",
+                "non_member_review_section": "reviewer selection",
+                "diff_line_map": {},
+            }
+        )
+
+        self.assertEqual(
+            subset,
+            {
+                "owner": "acme",
+                "repo": "widgets",
+                "diff_line_map": {},
+            },
+        )
 
 
 class ApplyReviewResultVerdictTest(unittest.TestCase):

@@ -56,6 +56,7 @@ _PR_DESCRIPTION_ATTACHMENT = "pr_description.md"
 _PR_DIFF_ATTACHMENT = "pr_diff.txt"
 _SPEC_CONTEXT_ATTACHMENT = "spec_context.md"
 _REVIEW_ATTACHMENT_PAYLOAD_FIELDS = {
+    "pr_body",
     "pr_description_text",
     "pr_diff_text",
     "spec_context_text",
