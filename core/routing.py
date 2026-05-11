@@ -44,6 +44,17 @@ Webhook coverage today:
   - ``opened`` routes to ``triage-new-issues`` regardless of the
     issue's existing labels (``ready-to-spec`` /
     ``ready-to-implement`` issues still get a triage pass).
+    The one exception is the ``auto-implement`` label: when an
+    issue is filed with it pre-applied, routing skips triage and
+    goes straight to ``create-implementation-from-issue``. Only
+    repository collaborators (or trusted bot identities they
+    grant label permissions to) can apply labels, so the label
+    is trusted as an authoritative skip-triage signal — and is
+    honored even when the issue author itself is an automation
+    user (e.g. a verified social-media intake bot filing on
+    behalf of a real user). Adding ``auto-implement`` to an
+    existing issue after the fact is intentionally a no-op:
+    only ``issues.opened`` honors the label.
   - ``assigned`` routes to ``create-spec-from-issue`` or
     ``create-implementation-from-issue`` when the assignee being
     added is ``oz-agent`` and the issue carries the matching
@@ -93,6 +104,7 @@ TRIAGED_LABEL = "triaged"
 NEEDS_INFO_LABEL = "needs-info"
 READY_TO_SPEC_LABEL = "ready-to-spec"
 READY_TO_IMPLEMENT_LABEL = "ready-to-implement"
+AUTO_IMPLEMENT_LABEL = "auto-implement"
 
 OZ_AGENT_MENTION = "@oz-agent"
 OZ_REVIEW_COMMAND = "/oz-review"
@@ -287,6 +299,19 @@ def _route_issues(payload: dict[str, Any]) -> RouteDecision:
             None, f"issues.{action} delivered for a pull request"
         )
     if action == "opened":
+        labels = _label_names(issue.get("labels"))
+        if AUTO_IMPLEMENT_LABEL in labels:
+            # Trust-safe: GitHub restricts label application to
+            # collaborators (or bot identities granted that
+            # permission), so an ``auto-implement`` label present
+            # at issue-open time is an authoritative skip-triage
+            # signal. Honor it even when the issue author itself
+            # is an automation user (e.g. a verified social-media
+            # intake bot filing on behalf of a real user).
+            return RouteDecision(
+                WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE,
+                "issues.opened with auto-implement label skips triage",
+            )
         if _is_bot(issue.get("user")):
             return RouteDecision(None, "issue authored by automation user")
         return RouteDecision(
@@ -465,6 +490,7 @@ def route_event(event: str, payload: dict[str, Any]) -> RouteDecision:
 
 
 __all__ = [
+    "AUTO_IMPLEMENT_LABEL",
     "NEEDS_INFO_LABEL",
     "OZ_AGENT_LOGIN",
     "OZ_AGENT_MENTION",

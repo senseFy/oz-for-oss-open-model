@@ -92,6 +92,60 @@ class IssuesEventTest(unittest.TestCase):
         )
         self.assertIsNone(decision.workflow)
 
+    def test_issues_opened_with_auto_implement_label_skips_triage(self) -> None:
+        # The auto-implement label is a trusted skip-triage signal:
+        # only repository collaborators can apply labels, so the bot
+        # dispatches the implementation workflow directly when an
+        # issue is filed with the label pre-applied.
+        decision = route_event(
+            "issues",
+            {
+                "action": "opened",
+                "issue": _issue(labels=["auto-implement"]),
+            },
+        )
+        self.assertEqual(
+            decision.workflow, WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
+        )
+
+    def test_issues_opened_with_auto_implement_label_routes_even_for_bot_author(
+        self,
+    ) -> None:
+        # Trusted intake bots (e.g. a social-media bot filing on
+        # behalf of a real user) may author issues with the
+        # auto-implement label pre-applied. The label is the
+        # trust signal — the author being a bot does not block
+        # dispatch when the label is present.
+        decision = route_event(
+            "issues",
+            {
+                "action": "opened",
+                "issue": _issue(
+                    labels=["auto-implement"],
+                    user={"login": "warp-intake[bot]", "type": "Bot"},
+                ),
+            },
+        )
+        self.assertEqual(
+            decision.workflow, WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
+        )
+
+    def test_auto_implement_label_added_post_open_is_dropped(self) -> None:
+        # Adding ``auto-implement`` to an existing issue after the
+        # fact is intentionally a no-op — only ``issues.opened``
+        # honors the label. The labeled-branch unhandled-label
+        # drop catches this since auto-implement is not in the
+        # recognized lifecycle-label set.
+        decision = route_event(
+            "issues",
+            {
+                "action": "labeled",
+                "label": {"name": "auto-implement"},
+                "issue": _issue(labels=["auto-implement"]),
+            },
+        )
+        self.assertIsNone(decision.workflow)
+
     def test_oz_agent_assigned_to_ready_to_implement_routes_to_create_implementation(
         self,
     ) -> None:
