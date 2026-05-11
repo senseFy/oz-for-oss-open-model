@@ -125,18 +125,6 @@ def _same_repo_issue_numbers_from_refs(
     return list(dict.fromkeys(numbers))
 
 
-def _positive_issue_numbers(values: list[int] | None) -> list[int]:
-    numbers: list[int] = []
-    for value in values or []:
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
-            continue
-        if number > 0:
-            numbers.append(number)
-    return list(dict.fromkeys(numbers))
-
-
 def _issue_label_names(issue: Any) -> list[str]:
     return [
         name
@@ -202,7 +190,7 @@ def check_pr_issue_state_for_review(
     )
     issue_numbers = list(
         dict.fromkeys(
-            _positive_issue_numbers(explicit_issue_numbers)
+            list(explicit_issue_numbers or [])
             + github_linked_issue_numbers
         )
     )

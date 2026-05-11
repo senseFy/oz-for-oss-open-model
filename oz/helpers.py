@@ -1966,9 +1966,9 @@ def resolve_issue_number_for_pr(
 
 
 def is_spec_only_pr(changed_files: list[str]) -> bool:
-    """Return True when a PR contains only spec/Markdown files."""
+    """Return True when a PR contains only spec files."""
     return bool(changed_files) and all(
-        filename.startswith("specs/") or filename.lower().endswith(".md")
+        filename.startswith("specs/")
         for filename in changed_files
     )
 
