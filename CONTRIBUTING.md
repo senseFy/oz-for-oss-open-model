@@ -15,13 +15,13 @@ Other labels, such as automated triage labels for area or reproducibility, are i
 
 ## When to open a spec PR
 
-Spec-only PRs (markdown-only changes) are accepted without requiring a matching `ready-to-spec` issue. Spec discussion is free-form and can start directly from a PR when that is the most useful place for the conversation.
+Spec-only PRs (markdown-only changes) are accepted when they are tied to an issue that is marked `ready-to-spec`. Spec discussion should start from an issue so maintainers can confirm the problem is ready for product and technical due diligence before a PR enters review.
 
 In practice, that means:
 
-- use the issue for product discussion first when a shared baseline is helpful
-- the `ready-to-spec` label still signals that the Warp team wants product and technical due diligence on an issue before code starts, but it does not gate opening a spec PR
-- open a PR with the product spec and tech spec whenever the spec material is ready to review
+- use the issue for product discussion first so a shared baseline is clear
+- wait until the Warp team marks the issue `ready-to-spec`
+- open a PR with the product spec and tech spec once the issue is in that state
 - use the PR as the place for product and technical discussion and iteration
 
 For larger changes, the specs live in the PR and become the home for the back-and-forth. Once they are in good shape, the Warp team can approve them and the work can move into implementation.
