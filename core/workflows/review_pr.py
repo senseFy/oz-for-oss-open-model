@@ -1020,7 +1020,7 @@ def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
         - Use the attached `{_PR_DIFF_ATTACHMENT}` exactly as the diff input when validating `review.json`.
         - Run `python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff {_PR_DIFF_ATTACHMENT}` after creating `review.json`, or locate the bundled `validate_review_json.py` under the packaged `review-pr` skill directory and run that copy. Fix every reported error before finishing.
         - Do not post the final review directly.
-        - After you create and validate `review.json`, leave it at the repository root for the workflow to collect.
+        - After you create and validate `review.json`, upload it as an Oz run artifact via `oz artifact upload {_REVIEW_OUTPUT_FILENAME}` (or `oz-preview artifact upload {_REVIEW_OUTPUT_FILENAME}` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
         """
     ).strip()
     repo_local_section = str(context.get("repo_local_section") or "").rstrip()

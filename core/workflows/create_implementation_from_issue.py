@@ -109,7 +109,7 @@ def build_create_implementation_prompt(
           - `branch_name`: the branch you pushed to. You may customize it by appending a short descriptive slug to the default (e.g. `{target_branch}-add-retry-logic`), but it must start with `{target_branch}`.
           - `pr_title`: a conventional-commit-style PR title derived from the actual changes (e.g. `feat: add retry logic for transient API failures`).
           - `pr_summary`: the full markdown PR body. The first line must be `Closes #{issue_number}` so GitHub auto-closes the issue when the PR merges.
-        - After writing `pr-metadata.json`, leave it at the repository root for the workflow to collect.
+        - After writing `pr-metadata.json`, upload it as an Oz run artifact via `oz artifact upload pr-metadata.json` (or `oz-preview artifact upload pr-metadata.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
         - If you produce changes, commit them to the branch specified in your `pr-metadata.json` `branch_name` field and push that branch to origin.
         - After pushing, stop. Do not open or update the pull request yourself, and do not invoke `gh pr create`, `gh pr edit`, or equivalent commands.
         - The outer workflow owns any pull-request creation or pull-request title/body refresh after your branch push and `pr-metadata.json` file handoff.
