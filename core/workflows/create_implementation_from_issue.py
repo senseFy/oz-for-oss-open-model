@@ -100,7 +100,7 @@ def build_create_implementation_prompt(
 
         Workflow Requirements:
         - Use the shared implementation skills `{implement_specs_skill_path}` and `{spec_driven_implementation_skill_path}` from the workflow-code repository as the base workflow for this run.
-        - Read the Oz wrapper skill `{implement_issue_skill_path}` and apply its instructions for `spec_context.md`, `issue_comments.txt`, `implementation_summary.md`, and `pr_description.md`.
+        - Read the Oz wrapper skill `{implement_issue_skill_path}` and apply its instructions for `spec_context.md`, the trusted GitHub context fetch script, `implementation_summary.md`, and `pr_description.md`.
         - Work on branch `{target_branch}`.
         - If that branch already exists, fetch it and continue from it. Otherwise create it from `{default_branch}`.
         - Align the implementation with the plan context above when present.

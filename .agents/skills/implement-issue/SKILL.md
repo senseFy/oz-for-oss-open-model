@@ -24,7 +24,7 @@ The Oz-specific differences are:
 
 - the primary input is a GitHub issue
 - approved spec context may be supplied in `spec_context.md`
-- issue discussion may be supplied in `issue_comments.txt`
+- issue discussion must be fetched with the trusted GitHub context script named in the prompt
 - the workflow expects a reusable markdown summary in `implementation_summary.md`
 - the workflow may also expect a structured PR metadata file in `pr-metadata.json`
 
@@ -76,7 +76,7 @@ When the prompt asks for `pr-metadata.json`, the agent must produce a JSON file 
 8. Run the most relevant validation available in the repository for the files you changed. Prefer existing build, test, lint, or typecheck commands documented in the repository.
 9. Write a concise markdown summary for the workflow to reuse in `implementation_summary.md` at the repository root. Include what changed, how it was validated, and any remaining assumptions, spec updates, or follow-up notes.
 10. If the prompt asks for it, write `pr-metadata.json` at the repository root containing the structured PR metadata described in the Inputs section above. The `pr_summary` field must start with `Closes #<issue_number>` so GitHub auto-closes the issue when the PR is merged. Make the summary ready to use directly as the PR body, with concise sections for the change summary, validation, and any assumptions or follow-up notes that reviewers should know.
-11. Treat `issue_comments.txt`, `spec_context.md`, `implementation_summary.md`, and `pr-metadata.json` as temporary workflow files only. Do not include them in the final diff.
+11. Treat `spec_context.md`, `implementation_summary.md`, and `pr-metadata.json` as temporary workflow files only. Do not include them in the final diff.
 12. Default behavior: do not stage files, create commits, push branches, open pull requests, or use the GitHub CLI. If the prompt explicitly instructs you to publish a named branch, you may commit and push exactly the requested implementation changes to that branch, but still do not open or update the pull request yourself unless the prompt explicitly asks for it. When the prompt also asks you to write `pr-metadata.json`, treat that file as a handoff to the outer workflow; after the branch push and file handoff, stop rather than creating or editing the pull request yourself.
 
 ## Outputs

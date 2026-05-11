@@ -17,7 +17,7 @@ The focus here is high-level design concerns that a security-minded reader would
 
 - The working directory is the PR branch checkout.
 - The workflow usually provides an annotated diff in `pr_diff.txt`.
-- The workflow usually provides the PR description in `pr_description.txt`.
+- The workflow usually provides the PR description in `pr_description.md`.
 - Spec PRs typically only modify files under `specs/`.
 - Focus on the spec files and sections changed by this PR.
 - Default behavior: do not post comments or reviews to GitHub directly.
@@ -79,7 +79,7 @@ Evaluate the changed spec content against the following concerns. Treat the list
 
 ## Process
 
-1. Read `pr_description.txt` and `pr_diff.txt` to understand the scope and intent of the spec change.
+1. Read `pr_description.md` and `pr_diff.txt` to understand the scope and intent of the spec change.
 2. For each changed section, ask: if this were implemented as written, which of the concerns above would a security-minded reviewer raise?
 3. Distinguish between "the spec is silent on X" (usually flag) and "the spec explicitly accepts risk X" (usually acceptable if the reasoning is sound).
 4. Prefer evidence-based findings tied to specific changed lines or sections. If a concern only applies to untouched spec content, describe it in the review summary instead of as an inline comment.

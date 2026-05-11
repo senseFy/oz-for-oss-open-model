@@ -15,7 +15,7 @@ Determine whether the implementation in the checked-out PR materially matches th
 
 - `spec_context.md` contains the spec context to compare against. It may include both product spec content (intended behavior, acceptance criteria) and tech spec content (implementation details, file changes).
 - `pr_diff.txt` contains the annotated diff for the PR.
-- `pr_description.txt` may contain additional scope or rationale.
+- `pr_description.md` may contain additional scope or rationale.
 - The working tree contains the PR branch contents.
 
 ## Process

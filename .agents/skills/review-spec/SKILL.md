@@ -11,7 +11,7 @@ Review a spec or plan pull request and write the output to `review.json`.
 
 - The working directory is the PR branch checkout.
 - The workflow usually provides an annotated diff in `pr_diff.txt`.
-- The workflow usually provides the PR description in `pr_description.txt`.
+- The workflow usually provides the PR description in `pr_description.md`.
 - Focus on the spec files changed by this PR.
 - Default behavior: do not post comments or reviews to GitHub directly.
 

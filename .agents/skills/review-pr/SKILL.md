@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Review a pull request diff and write structured feedback to review.json for the workflow to publish. Use when reviewing a checked-out PR from local artifacts like pr_diff.txt and pr_description.txt and producing machine-readable review output instead of posting directly to GitHub.
+description: Review a pull request diff and write structured feedback to review.json for the workflow to publish. Use when reviewing a checked-out PR from local artifacts like pr_diff.txt and pr_description.md and producing machine-readable review output instead of posting directly to GitHub.
 ---
 
 # Review PR Skill
@@ -11,7 +11,7 @@ Review the current pull request and write the output to `review.json`.
 
 - The working directory is the PR branch checkout.
 - The workflow usually provides an annotated diff in `pr_diff.txt`.
-- The workflow usually provides the PR description in `pr_description.txt`.
+- The workflow usually provides the PR description in `pr_description.md`.
 - If `spec_context.md` exists, it contains spec context for implementation-vs-spec validation.
 - When the prompt references `.agents/skills/review-pr/scripts/resolve_spec_context.py`, use that script to materialize `spec_context.md` on demand instead of expecting spec content to be embedded in the prompt.
 - Focus on files and lines changed by this PR.
