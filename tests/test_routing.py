@@ -14,6 +14,7 @@ import unittest
 from . import conftest  # noqa: F401
 
 from core.routing import (
+    AUTO_IMPLEMENT_LABEL,
     OZ_AGENT_LOGIN,
     RouteDecision,
     WORKFLOW_ANNOUNCE_READY_ISSUE,
@@ -54,6 +55,21 @@ class IssuesEventTest(unittest.TestCase):
         decision = route_event("issues", {"action": "opened", "issue": _issue()})
         self.assertEqual(decision.workflow, WORKFLOW_TRIAGE_NEW_ISSUES)
 
+    def test_issues_opened_with_auto_implement_routes_to_create_implementation(
+        self,
+    ) -> None:
+        decision = route_event(
+            "issues",
+            {
+                "action": "opened",
+                "issue": _issue(labels=[AUTO_IMPLEMENT_LABEL]),
+            },
+        )
+        self.assertEqual(
+            decision.workflow, WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
+        )
+        self.assertIn(AUTO_IMPLEMENT_LABEL, decision.reason)
+
     def test_issues_opened_on_triaged_issue_still_routes_to_triage(self) -> None:
         # Even issues that already carry post-triage labels (``triaged``,
         # ``ready-to-spec``, ``ready-to-implement``) should get a fresh
@@ -91,6 +107,23 @@ class IssuesEventTest(unittest.TestCase):
             },
         )
         self.assertIsNone(decision.workflow)
+
+    def test_issues_opened_with_auto_implement_from_bot_routes_to_create_implementation(
+        self,
+    ) -> None:
+        decision = route_event(
+            "issues",
+            {
+                "action": "opened",
+                "issue": _issue(
+                    labels=[AUTO_IMPLEMENT_LABEL],
+                    user={"login": "trusted-intake[bot]", "type": "Bot"},
+                ),
+            },
+        )
+        self.assertEqual(
+            decision.workflow, WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
+        )
 
     def test_oz_agent_assigned_to_ready_to_implement_routes_to_create_implementation(
         self,
@@ -308,6 +341,20 @@ class IssuesEventTest(unittest.TestCase):
                 "label": {"name": "good-first-issue"},
                 "issue": _issue(
                     labels=["good-first-issue"], assignees=[OZ_AGENT_LOGIN]
+                ),
+            },
+        )
+        self.assertIsNone(decision.workflow)
+        self.assertIn("unhandled label", decision.reason)
+
+    def test_auto_implement_label_added_to_existing_issue_is_dropped(self) -> None:
+        decision = route_event(
+            "issues",
+            {
+                "action": "labeled",
+                "label": {"name": AUTO_IMPLEMENT_LABEL},
+                "issue": _issue(
+                    labels=[AUTO_IMPLEMENT_LABEL], assignees=[OZ_AGENT_LOGIN]
                 ),
             },
         )

@@ -41,9 +41,12 @@ Webhook coverage today:
   workflow for stale content.
 - ``issues`` events:
 
-  - ``opened`` routes to ``triage-new-issues`` regardless of the
-    issue's existing labels (``ready-to-spec`` /
-    ``ready-to-implement`` issues still get a triage pass).
+  - ``opened`` routes to ``create-implementation-from-issue`` when
+    the issue already carries ``auto-implement``; this route bypasses
+    the normal bot-author drop. Other opened issues route to
+    ``triage-new-issues`` regardless of existing lifecycle labels
+    (``ready-to-spec`` / ``ready-to-implement`` issues still get a
+    triage pass).
   - ``assigned`` routes to ``create-spec-from-issue`` or
     ``create-implementation-from-issue`` when the assignee being
     added is ``oz-agent`` and the issue carries the matching
@@ -57,7 +60,9 @@ Webhook coverage today:
     webhook can post a one-shot announcement comment letting
     contributors know the issue is open for the matching kind of
     contribution and that maintainers can tag ``@oz-agent`` to start
-    automated work.
+    automated work. ``auto-implement`` is intentionally not an
+    ``issues.labeled`` trigger because it is only honored at issue
+    creation time.
 
 - ``issue_comment`` ``created`` events on a plain (non-PR) issue route to
   ``triage-new-issues`` when the comment carries an ``@oz-agent``
@@ -93,6 +98,7 @@ TRIAGED_LABEL = "triaged"
 NEEDS_INFO_LABEL = "needs-info"
 READY_TO_SPEC_LABEL = "ready-to-spec"
 READY_TO_IMPLEMENT_LABEL = "ready-to-implement"
+AUTO_IMPLEMENT_LABEL = "auto-implement"
 
 OZ_AGENT_MENTION = "@oz-agent"
 OZ_REVIEW_COMMAND = "/oz-review"
@@ -252,13 +258,16 @@ def _route_issues(payload: dict[str, Any]) -> RouteDecision:
 
     Three actions are routed:
 
-    - ``opened`` triggers a fresh triage pass regardless of the
-      issue's existing labels. Issues that arrive with prior
-      lifecycle labels (``ready-to-spec``, ``ready-to-implement``,
-      etc.) — for example because they were imported from another
-      repo or re-opened — still get a triage pass so the bot can
-      post a fresh progress comment and pick up any state changes
-      that landed while the issue was closed.
+    - ``opened`` triggers ``create-implementation-from-issue`` when
+      the issue already carries ``auto-implement``. That label is a
+      trusted issue-creation-time shortcut and is checked before the
+      normal bot-author drop. Other opened issues trigger a fresh
+      triage pass regardless of the issue's existing labels. Issues
+      that arrive with prior lifecycle labels (``ready-to-spec``,
+      ``ready-to-implement``, etc.) — for example because they were
+      imported from another repo or re-opened — still get a triage
+      pass so the bot can post a fresh progress comment and pick up
+      any state changes that landed while the issue was closed.
     - ``assigned`` triggers ``create-spec-from-issue`` or
       ``create-implementation-from-issue`` when the assignee being
       added is ``oz-agent`` itself and the issue carries the
@@ -287,6 +296,12 @@ def _route_issues(payload: dict[str, Any]) -> RouteDecision:
             None, f"issues.{action} delivered for a pull request"
         )
     if action == "opened":
+        labels = _label_names(issue.get("labels"))
+        if AUTO_IMPLEMENT_LABEL in labels:
+            return RouteDecision(
+                WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE,
+                "auto-implement label on newly opened issue",
+            )
         if _is_bot(issue.get("user")):
             return RouteDecision(None, "issue authored by automation user")
         return RouteDecision(
@@ -465,6 +480,7 @@ def route_event(event: str, payload: dict[str, Any]) -> RouteDecision:
 
 
 __all__ = [
+    "AUTO_IMPLEMENT_LABEL",
     "NEEDS_INFO_LABEL",
     "OZ_AGENT_LOGIN",
     "OZ_AGENT_MENTION",
