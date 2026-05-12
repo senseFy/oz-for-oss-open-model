@@ -156,25 +156,44 @@ def _is_automation_user(user: Any) -> bool:
     return bool(login) and login.endswith("[bot]")
 
 
+# run_id written into enforcement comments by review_pr._ENFORCEMENT_COMMENT_RUN_ID.
+# Must stay in sync with that constant.
+_REVIEW_ENFORCEMENT_RUN_ID = "pr-issue-state-enforcement"
+
+
 def _explicit_review_invocations_in_window(
     pr: Any,
 ) -> tuple[int, datetime | None]:
-    """Count non-bot /oz-review invocations within the rolling 24-hour window.
+    """Count Oz review progress comments on *pr* within the rolling 24-hour window.
+
+    Each dispatched /oz-review run produces one bot-authored issue comment
+    carrying the ``review-pull-request`` workflow metadata. Progress comments
+    are the unit of counting; enforcement-only comments (identified by the
+    ``pr-issue-state-enforcement`` run_id) are excluded because no review run
+    was dispatched for them.
 
     Returns ``(count, oldest)`` where *oldest* is the ``created_at`` of the
-    earliest in-window invocation, used to compute the retry message. Comments
-    without a ``created_at`` are counted conservatively but do not contribute
-    to *oldest*, so the retry duration may be omitted when timestamps are
-    unavailable.
+    earliest in-window progress comment, used to compute the retry message.
+    The current invocation has not yet been dispatched, so *count* reflects
+    only prior completed runs. Callers must therefore use ``>= MAX`` to block
+    and ``== MAX - 1`` to emit the advisory.
+
+    Comments without a ``created_at`` are counted conservatively but do not
+    contribute to *oldest*, so the retry duration may be omitted when
+    timestamps are unavailable.
     """
     window_start = datetime.now(timezone.utc) - timedelta(hours=24)
+    review_workflow_marker = f'"workflow":"{WORKFLOW_REVIEW_PR}"'
+    enforcement_marker = f'"run_id":"{_REVIEW_ENFORCEMENT_RUN_ID}"'
     count = 0
     oldest: datetime | None = None
-    for comment in list(pr.get_issue_comments()) + list(pr.get_review_comments()):
-        body = str(_get_field(comment, "body", "") or "")
-        if not has_oz_review_command(body):
+    for comment in list(pr.get_issue_comments()):
+        if not _is_automation_user(_get_field(comment, "user")):
             continue
-        if _is_automation_user(_get_field(comment, "user")):
+        body = str(_get_field(comment, "body", "") or "")
+        if review_workflow_marker not in body:
+            continue
+        if enforcement_marker in body:
             continue
         created_at = _get_field(comment, "created_at")
         if created_at is None:
@@ -264,9 +283,9 @@ class ReviewWorkflow(BaseWorkflow):
                 if oldest_invocation is not None
                 else ""
             )
-            if invocation_count > MAX_DAILY_REVIEW_INVOCATIONS:
+            if invocation_count >= MAX_DAILY_REVIEW_INVOCATIONS:
                 logger.info(
-                    "Skipping /oz-review for %s PR #%s: %s invocations in window exceeds daily limit %s",
+                    "Skipping /oz-review for %s PR #%s: %s prior runs in window meets/exceeds daily limit %s",
                     full_name,
                     pr_number,
                     invocation_count,
@@ -284,7 +303,7 @@ class ReviewWorkflow(BaseWorkflow):
                         pr_number,
                     )
                 return None
-            if invocation_count == MAX_DAILY_REVIEW_INVOCATIONS:
+            if invocation_count == MAX_DAILY_REVIEW_INVOCATIONS - 1:
                 try:
                     repo_handle.get_issue(pr_number).create_comment(
                         f"This is your last `/oz-review` for the current 24-hour window.{retry_suffix}"
