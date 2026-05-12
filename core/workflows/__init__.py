@@ -11,6 +11,8 @@ from oz.agent_workflow import (
     make_run_adapter,
 )
 
+from oz.helpers import ENFORCEMENT_COMMENT_RUN_ID
+
 from core.routing import (
     MAX_DAILY_REVIEW_INVOCATIONS,
     WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE,
@@ -156,11 +158,6 @@ def _is_automation_user(user: Any) -> bool:
     return bool(login) and login.endswith("[bot]")
 
 
-# run_id written into enforcement comments by review_pr._ENFORCEMENT_COMMENT_RUN_ID.
-# Must stay in sync with that constant.
-_REVIEW_ENFORCEMENT_RUN_ID = "pr-issue-state-enforcement"
-
-
 def _explicit_review_invocations_in_window(
     pr: Any,
 ) -> tuple[int, datetime | None]:
@@ -184,7 +181,7 @@ def _explicit_review_invocations_in_window(
     """
     window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     review_workflow_marker = f'"workflow":"{WORKFLOW_REVIEW_PR}"'
-    enforcement_marker = f'"run_id":"{_REVIEW_ENFORCEMENT_RUN_ID}"'
+    enforcement_marker = f'"run_id":"{ENFORCEMENT_COMMENT_RUN_ID}"'
     count = 0
     oldest: datetime | None = None
     for comment in list(pr.get_issue_comments()):
