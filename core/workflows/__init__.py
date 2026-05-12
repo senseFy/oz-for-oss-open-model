@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -11,7 +12,7 @@ from oz.agent_workflow import (
 )
 
 from core.routing import (
-    MAX_EXPLICIT_REVIEW_INVOCATIONS_PER_PR,
+    MAX_DAILY_REVIEW_INVOCATIONS,
     WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE,
     WORKFLOW_CREATE_SPEC_FROM_ISSUE,
     WORKFLOW_PLAN_APPROVED,
@@ -155,17 +156,53 @@ def _is_automation_user(user: Any) -> bool:
     return bool(login) and login.endswith("[bot]")
 
 
-def _explicit_review_invocation_count(pr: Any) -> int:
-    """Count non-bot explicit review invocations already persisted on *pr*."""
+def _explicit_review_invocations_in_window(
+    pr: Any,
+) -> tuple[int, datetime | None]:
+    """Count non-bot /oz-review invocations within the rolling 24-hour window.
+
+    Returns ``(count, oldest)`` where *oldest* is the ``created_at`` of the
+    earliest in-window invocation, used to compute the retry message. Comments
+    without a ``created_at`` are counted conservatively but do not contribute
+    to *oldest*, so the retry duration may be omitted when timestamps are
+    unavailable.
+    """
+    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     count = 0
+    oldest: datetime | None = None
     for comment in list(pr.get_issue_comments()) + list(pr.get_review_comments()):
         body = str(_get_field(comment, "body", "") or "")
         if not has_oz_review_command(body):
             continue
         if _is_automation_user(_get_field(comment, "user")):
             continue
-        count += 1
-    return count
+        created_at = _get_field(comment, "created_at")
+        if created_at is None:
+            # No timestamp: count conservatively without updating oldest.
+            count += 1
+            continue
+        # Normalise to UTC-aware for comparison.
+        if getattr(created_at, "tzinfo", None) is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        if created_at >= window_start:
+            count += 1
+            if oldest is None or created_at < oldest:
+                oldest = created_at
+    return count, oldest
+
+
+def _format_retry_duration(oldest_invocation: datetime) -> str:
+    """Return a human-readable duration until the oldest invocation ages out."""
+    reset_at = oldest_invocation + timedelta(hours=24)
+    remaining = reset_at - datetime.now(timezone.utc)
+    total_seconds = max(0, int(remaining.total_seconds()))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes = remainder // 60
+    if hours > 0:
+        return f"~{hours}h {minutes}m"
+    if minutes > 0:
+        return f"~{minutes}m"
+    return "shortly"
 
 
 def _is_explicit_review_invocation(payload: Mapping[str, Any]) -> bool:
@@ -209,9 +246,7 @@ class ReviewWorkflow(BaseWorkflow):
         pr = repo_handle.get_pull(pr_number)
         if _is_explicit_review_invocation(payload):
             try:
-                invocation_count = _explicit_review_invocation_count(
-                    pr
-                )
+                invocation_count, oldest_invocation = _explicit_review_invocations_in_window(pr)
             except Exception:
                 # Fail open: if the throttle lookup itself fails for any
                 # reason (transient API error, permissions issue, etc.) we
@@ -223,15 +258,43 @@ class ReviewWorkflow(BaseWorkflow):
                     pr_number,
                 )
                 invocation_count = 0
-            if invocation_count > MAX_EXPLICIT_REVIEW_INVOCATIONS_PER_PR:
+                oldest_invocation = None
+            retry_suffix = (
+                f" Your next slot opens in {_format_retry_duration(oldest_invocation)}."
+                if oldest_invocation is not None
+                else ""
+            )
+            if invocation_count > MAX_DAILY_REVIEW_INVOCATIONS:
                 logger.info(
-                    "Skipping /oz-review for %s PR #%s: invocation count %s exceeds limit %s",
+                    "Skipping /oz-review for %s PR #%s: %s invocations in window exceeds daily limit %s",
                     full_name,
                     pr_number,
                     invocation_count,
-                    MAX_EXPLICIT_REVIEW_INVOCATIONS_PER_PR,
+                    MAX_DAILY_REVIEW_INVOCATIONS,
                 )
+                try:
+                    repo_handle.get_issue(pr_number).create_comment(
+                        f"You've used all {MAX_DAILY_REVIEW_INVOCATIONS} `/oz-review` slots "
+                        f"for the current 24-hour window.{retry_suffix}"
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to post review-limit comment for %s PR #%s",
+                        full_name,
+                        pr_number,
+                    )
                 return None
+            if invocation_count == MAX_DAILY_REVIEW_INVOCATIONS:
+                try:
+                    repo_handle.get_issue(pr_number).create_comment(
+                        f"This is your last `/oz-review` for the current 24-hour window.{retry_suffix}"
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to post review advisory comment for %s PR #%s",
+                        full_name,
+                        pr_number,
+                    )
         if not enforce_pr_issue_state_for_review(
             repo_handle,
             owner=owner,
