@@ -103,11 +103,10 @@ AUTO_IMPLEMENT_LABEL = "auto-implement"
 OZ_AGENT_MENTION = "@oz-agent"
 OZ_REVIEW_COMMAND = "/oz-review"
 OZ_VERIFY_COMMAND = "/oz-verify"
-MAX_EXPLICIT_REVIEW_INVOCATIONS_PER_PR = 3
 OZ_REVIEW_COMMAND_PATTERN = re.compile(
     r"(?:^|\s)(?:/oz-review|@oz-agent\s+/review)(?![-\w])", re.IGNORECASE
 )
-
+MAX_DAILY_REVIEW_INVOCATIONS = 5
 
 def has_oz_review_command(body: str) -> bool:
     """Return whether *body* carries an explicit Oz review invocation."""
@@ -481,6 +480,7 @@ def route_event(event: str, payload: dict[str, Any]) -> RouteDecision:
 
 __all__ = [
     "AUTO_IMPLEMENT_LABEL",
+    "MAX_DAILY_REVIEW_INVOCATIONS",
     "NEEDS_INFO_LABEL",
     "OZ_AGENT_LOGIN",
     "OZ_AGENT_MENTION",
@@ -488,7 +488,6 @@ __all__ = [
     "OZ_REVIEW_COMMAND_PATTERN",
     "OZ_VERIFY_COMMAND",
     "OZ_REVIEW_LABEL",
-    "MAX_EXPLICIT_REVIEW_INVOCATIONS_PER_PR",
     "PLAN_APPROVED_LABEL",
     "READY_TO_IMPLEMENT_LABEL",
     "READY_TO_SPEC_LABEL",

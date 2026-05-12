@@ -11,6 +11,7 @@ from github.Repository import Repository
 from oz.helpers import (
     build_comment_body,
     comment_metadata,
+    ENFORCEMENT_COMMENT_RUN_ID,
     get_field,
     get_label_name,
     is_automation_user,
@@ -49,7 +50,6 @@ logger = logging.getLogger(__name__)
 _REVIEW_OUTPUT_FILENAME = "review.json"
 _READY_TO_SPEC_LABEL = "ready-to-spec"
 _READY_TO_IMPLEMENT_LABEL = "ready-to-implement"
-_ENFORCEMENT_COMMENT_RUN_ID = "pr-issue-state-enforcement"
 _READY_LABELS = frozenset({_READY_TO_SPEC_LABEL, _READY_TO_IMPLEMENT_LABEL})
 
 # Allowed values for the agent-supplied ``verdict`` field on ``review.json``.
@@ -287,7 +287,7 @@ def _upsert_pr_issue_state_enforcement_comment(
     metadata = comment_metadata(
         WORKFLOW_NAME,
         pr_number,
-        run_id=_ENFORCEMENT_COMMENT_RUN_ID,
+        run_id=ENFORCEMENT_COMMENT_RUN_ID,
     )
     comment_body = build_comment_body(body, metadata)
     issue = github.get_issue(pr_number)

@@ -33,6 +33,9 @@ def _github_actions_error(message: str) -> None:
 # Author associations treated as trusted without org-membership probing.
 ORG_MEMBER_ASSOCIATIONS: set[str] = {"COLLABORATOR", "MEMBER", "OWNER"}
 
+ENFORCEMENT_COMMENT_RUN_ID = "pr-issue-state-enforcement"
+
+
 _CLOSING_ISSUES_QUERY = (
     "query($owner: String!, $name: String!, $number: Int!, $after: String) {"
     " repository(owner: $owner, name: $name) {"
