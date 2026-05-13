@@ -28,9 +28,9 @@ from oz.helpers import (
     split_repo_full_name,
     WorkflowProgressComment,
 )
+from oz.attachments import text_attachment
 from .attachments import (
     Attachment,
-    context_text_attachment,
     payload_without_fields,
 )
 
@@ -436,14 +436,10 @@ def build_pr_comment_prompt(context: Mapping[str, Any]) -> str:
 
 
 def pr_comment_context_attachments(context: Mapping[str, Any]) -> list[Attachment]:
-    return [
-        context_text_attachment(
-            context,
-            "spec_context_text",
-            _SPEC_CONTEXT_ATTACHMENT,
-            default="No approved or repository spec context was found.",
-        )
-    ]
+    spec_context_text = context.get("spec_context_text")
+    if not isinstance(spec_context_text, str) or not spec_context_text:
+        spec_context_text = "No approved or repository spec context was found."
+    return [text_attachment(_SPEC_CONTEXT_ATTACHMENT, spec_context_text)]
 
 
 def pr_comment_payload_subset(context: Mapping[str, Any]) -> dict[str, Any]:

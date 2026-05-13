@@ -6,6 +6,7 @@ from typing import Any, Mapping, TypedDict
 
 from github.Repository import Repository
 
+from oz.attachments import text_attachment
 from oz.helpers import WorkflowProgressComment
 from oz.verification import (
     discover_verification_skills,
@@ -15,7 +16,6 @@ from oz.verification import (
 )
 from .attachments import (
     Attachment,
-    context_text_attachment,
     payload_without_fields,
 )
 
@@ -180,13 +180,11 @@ def build_verification_prompt(
 
 
 def verify_context_attachments(context: Mapping[str, Any]) -> list[Attachment]:
+    verification_skills_text = context.get("verification_skills_text")
+    if not isinstance(verification_skills_text, str) or not verification_skills_text:
+        verification_skills_text = "- No verification skills discovered."
     return [
-        context_text_attachment(
-            context,
-            "verification_skills_text",
-            _VERIFICATION_SKILLS_ATTACHMENT,
-            default="- No verification skills discovered.",
-        )
+        text_attachment(_VERIFICATION_SKILLS_ATTACHMENT, verification_skills_text)
     ]
 
 

@@ -30,6 +30,10 @@ class TextAttachmentTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             text_attachment(file_name="context.txt", text="hello", mime_type=" ")
 
+    def test_text_attachment_rejects_non_string_text(self) -> None:
+        with self.assertRaises(TypeError):
+            text_attachment(file_name="context.txt", text=object())  # type: ignore[arg-type]
+
 
 if __name__ == "__main__":
     unittest.main()

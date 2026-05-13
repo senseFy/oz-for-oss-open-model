@@ -9,7 +9,6 @@ DEFAULT_TEXT_ATTACHMENT_MIME_TYPE = "text/plain"
 
 class SdkAttachment(TypedDict):
     """SDK-compatible attachment payload for ``client.agent.run``."""
-
     data: str
     file_name: str
     mime_type: str
@@ -22,6 +21,8 @@ def text_attachment(
     mime_type: str = DEFAULT_TEXT_ATTACHMENT_MIME_TYPE,
 ) -> SdkAttachment:
     """Return a base64-encoded text attachment for an Oz SDK run."""
+    if not isinstance(text, str):
+        raise TypeError("Attachment text must be a string")
     normalized_file_name = file_name.strip()
     if not normalized_file_name:
         raise ValueError("Attachment file_name must be a non-empty string")

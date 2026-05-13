@@ -37,9 +37,9 @@ from oz.helpers import (
     WorkflowProgressComment,
 )
 from oz.oz_client import skill_file_path
+from oz.attachments import text_attachment
 from .attachments import (
     Attachment,
-    context_text_attachment,
     payload_without_fields,
 )
 
@@ -120,14 +120,10 @@ def build_create_implementation_prompt(
 
 
 def create_implementation_context_attachments(context: Mapping[str, Any]) -> list[Attachment]:
-    return [
-        context_text_attachment(
-            context,
-            "spec_context_text",
-            _SPEC_CONTEXT_ATTACHMENT,
-            default="No approved or repository spec context was found.",
-        )
-    ]
+    spec_context_text = context.get("spec_context_text")
+    if not isinstance(spec_context_text, str) or not spec_context_text:
+        spec_context_text = "No approved or repository spec context was found."
+    return [text_attachment(_SPEC_CONTEXT_ATTACHMENT, spec_context_text)]
 
 
 def create_implementation_payload_subset(context: Mapping[str, Any]) -> dict[str, Any]:

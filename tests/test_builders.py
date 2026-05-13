@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -203,10 +204,28 @@ class BuildReviewRequestTest(_BuilderTestBase):
         *,
         login: str = "alice",
         user_type: str = "User",
+        created_at: datetime | None = None,
     ) -> SimpleNamespace:
         return SimpleNamespace(
             body=body,
             user=SimpleNamespace(login=login, type=user_type),
+            created_at=created_at if created_at is not None else datetime.now(timezone.utc),
+        )
+
+    def _bot_progress_comment(
+        self,
+        *,
+        run_id: str = "test-run-uuid",
+        created_at: datetime | None = None,
+    ) -> SimpleNamespace:
+        """Simulate a bot-authored review progress comment."""
+        return SimpleNamespace(
+            body=(
+                f'<!-- oz-agent-metadata: {{"type":"issue-status","workflow":"review-pull-request"'
+                f',"issue":42,"run_id":"{run_id}"}} -->'
+            ),
+            user=SimpleNamespace(login="oz-for-oss[bot]", type="Bot"),
+            created_at=created_at if created_at is not None else datetime.now(timezone.utc),
         )
 
     def _github_client_with_review_comments(
@@ -261,14 +280,16 @@ class BuildReviewRequestTest(_BuilderTestBase):
                 workspace_path=Path("/tmp/ws"),
             )
 
-    def test_allows_third_explicit_review_invocation(self) -> None:
+    def test_allows_fifth_explicit_review_invocation_and_posts_advisory(self) -> None:
         from core.builders import build_review_request
 
+        # 4 prior completed reviews → this is the 5th (last) slot.
         github_client, repo, pr = self._github_client_with_review_comments(
             issue_comments=[
-                self._review_comment("/oz-review"),
-                self._review_comment("please @oz-agent /review"),
-                self._review_comment("/oz-review again"),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
             ],
         )
 
@@ -281,9 +302,14 @@ class BuildReviewRequestTest(_BuilderTestBase):
         self.assertIsNotNone(request)
         repo.get_pull.assert_called_once_with(42)
         pr.get_issue_comments.assert_called_once_with()
-        pr.get_review_comments.assert_called_once_with()
+        pr.get_review_comments.assert_not_called()
         review_module = sys.modules["workflows.review_pr"]
         review_module.gather_review_context.assert_called_once()  # type: ignore[attr-defined]
+        # Advisory comment must be posted when the daily limit is reached.
+        repo.get_issue.assert_called_with(42)
+        advisory_body: str = repo.get_issue.return_value.create_comment.call_args[0][0]
+        self.assertIn("last `/oz-review`", advisory_body)
+        self.assertIn("24-hour window", advisory_body)
 
     def test_skips_review_when_issue_state_enforcement_blocks(self) -> None:
         from core.builders import build_review_request
@@ -304,16 +330,18 @@ class BuildReviewRequestTest(_BuilderTestBase):
         review_module.gather_review_context.assert_not_called()  # type: ignore[attr-defined]
         review_module.build_review_prompt_for_dispatch.assert_not_called()  # type: ignore[attr-defined]
 
-    def test_skips_fourth_explicit_review_invocation(self) -> None:
+    def test_skips_sixth_explicit_review_invocation_and_posts_blocked_message(self) -> None:
         from core.builders import build_review_request
 
+        # 5 prior completed reviews → this would be the 6th, which is blocked.
         github_client, repo, pr = self._github_client_with_review_comments(
             issue_comments=[
-                self._review_comment("/oz-review"),
-                self._review_comment("/oz-review again"),
-                self._review_comment("please @oz-agent /review"),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
             ],
-            review_comments=[self._review_comment("/oz-review inline")],
         )
 
         request = build_review_request(
@@ -325,32 +353,37 @@ class BuildReviewRequestTest(_BuilderTestBase):
         self.assertIsNone(request)
         repo.get_pull.assert_called_once_with(42)
         pr.get_issue_comments.assert_called_once_with()
-        pr.get_review_comments.assert_called_once_with()
+        pr.get_review_comments.assert_not_called()
         review_module = sys.modules["workflows.review_pr"]
         review_module.gather_review_context.assert_not_called()  # type: ignore[attr-defined]
         review_module.build_review_prompt_for_dispatch.assert_not_called()  # type: ignore[attr-defined]
         self.assertEqual(len(self.progress_instances), 0)
+        # Blocked comment must be posted when the limit is exceeded.
+        repo.get_issue.assert_called_with(42)
+        blocked_body: str = repo.get_issue.return_value.create_comment.call_args[0][0]
+        self.assertIn("all 5 `/oz-review` slots", blocked_body)
+        self.assertIn("24-hour window", blocked_body)
 
-    def test_ignores_bot_comments_when_counting_explicit_invocations(self) -> None:
+    def test_only_bot_progress_comments_count_toward_limit(self) -> None:
         from core.builders import build_review_request
 
+        # 3 bot progress comments count; user /oz-review commands and
+        # enforcement comments do not.
+        enforcement_comment = SimpleNamespace(
+            body=(
+                '<!-- oz-agent-metadata: {"type":"issue-status","workflow":"review-pull-request"'
+                ',"issue":42,"run_id":"pr-issue-state-enforcement"} -->'
+            ),
+            user=SimpleNamespace(login="oz-for-oss[bot]", type="Bot"),
+            created_at=datetime.now(timezone.utc),
+        )
         github_client, repo, pr = self._github_client_with_review_comments(
             issue_comments=[
-                self._review_comment("/oz-review"),
-                self._review_comment("/oz-review again"),
-                self._review_comment("please @oz-agent /review"),
-                self._review_comment(
-                    "/oz-review from automation",
-                    login="oz-for-oss[bot]",
-                    user_type="Bot",
-                ),
-            ],
-            review_comments=[
-                self._review_comment(
-                    "/oz-review bot suffix",
-                    login="dependabot[bot]",
-                    user_type="User",
-                )
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+                enforcement_comment,
+                self._review_comment("/oz-review from user alice"),
             ],
         )
 
@@ -360,10 +393,43 @@ class BuildReviewRequestTest(_BuilderTestBase):
             workspace_path=Path("/tmp/ws"),
         )
 
+        # Only 3 real progress comments counted → under the limit, no advisory.
         self.assertIsNotNone(request)
         repo.get_pull.assert_called_once_with(42)
         pr.get_issue_comments.assert_called_once_with()
-        pr.get_review_comments.assert_called_once_with()
+        pr.get_review_comments.assert_not_called()
+        repo.get_issue.return_value.create_comment.assert_not_called()
+        review_module = sys.modules["workflows.review_pr"]
+        review_module.gather_review_context.assert_called_once()  # type: ignore[attr-defined]
+
+    def test_does_not_count_out_of_window_comments(self) -> None:
+        from core.builders import build_review_request
+
+        old_time = datetime.now(timezone.utc) - timedelta(hours=25)
+        github_client, repo, pr = self._github_client_with_review_comments(
+            issue_comments=[
+                # These two are outside the 24-hour window and must not count.
+                self._bot_progress_comment(created_at=old_time),
+                self._bot_progress_comment(created_at=old_time),
+                # These four are inside the window → 4 prior runs = advisory.
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+                self._bot_progress_comment(),
+            ],
+        )
+
+        request = build_review_request(
+            self._explicit_review_payload(),
+            github_client=github_client,
+            workspace_path=Path("/tmp/ws"),
+        )
+
+        # Out-of-window comments excluded → 4 in-window prior runs → advisory
+        # posted but review proceeds.
+        self.assertIsNotNone(request)
+        advisory_body: str = repo.get_issue.return_value.create_comment.call_args[0][0]
+        self.assertIn("last `/oz-review`", advisory_body)
         review_module = sys.modules["workflows.review_pr"]
         review_module.gather_review_context.assert_called_once()  # type: ignore[attr-defined]
 

@@ -11,6 +11,7 @@ from github.Repository import Repository
 from oz.helpers import (
     build_comment_body,
     comment_metadata,
+    ENFORCEMENT_COMMENT_RUN_ID,
     get_field,
     get_label_name,
     is_automation_user,
@@ -22,6 +23,7 @@ from oz.helpers import (
     resolve_spec_context_for_pr_via_api,
     WorkflowProgressComment,
 )
+from oz.attachments import text_attachment
 from oz.repo_local import (
     format_repo_local_prompt_section,
     repo_local_skill_path_for_dispatch,
@@ -43,7 +45,6 @@ from oz.triage import (
 )
 from .attachments import (
     Attachment,
-    context_text_attachment,
     payload_without_fields,
 )
 
@@ -65,7 +66,6 @@ _REVIEW_ATTACHMENT_PAYLOAD_FIELDS = {
 }
 _READY_TO_SPEC_LABEL = "ready-to-spec"
 _READY_TO_IMPLEMENT_LABEL = "ready-to-implement"
-_ENFORCEMENT_COMMENT_RUN_ID = "pr-issue-state-enforcement"
 _READY_LABELS = frozenset({_READY_TO_SPEC_LABEL, _READY_TO_IMPLEMENT_LABEL})
 
 # Allowed values for the agent-supplied ``verdict`` field on ``review.json``.
@@ -303,7 +303,7 @@ def _upsert_pr_issue_state_enforcement_comment(
     metadata = comment_metadata(
         WORKFLOW_NAME,
         pr_number,
-        run_id=_ENFORCEMENT_COMMENT_RUN_ID,
+        run_id=ENFORCEMENT_COMMENT_RUN_ID,
     )
     comment_body = build_comment_body(body, metadata)
     issue = github.get_issue(pr_number)
@@ -969,19 +969,23 @@ def gather_review_context(
 
 def review_context_attachments(context: Mapping[str, Any]) -> list[Attachment]:
     """Return text attachments consumed by the cloud-mode review prompt."""
-    spec_context_text = str(context.get("spec_context_text") or "").strip()
+    pr_description_text = context.get("pr_description_text")
+    if not isinstance(pr_description_text, str):
+        pr_description_text = ""
+    pr_diff_text = context.get("pr_diff_text")
+    if not isinstance(pr_diff_text, str):
+        pr_diff_text = ""
+    spec_context_text = context.get("spec_context_text")
+    if not isinstance(spec_context_text, str):
+        spec_context_text = ""
     spec_context_attachment = (
-        spec_context_text
+        spec_context_text.strip()
         or "No approved or repository spec context was found for this PR."
     )
     return [
-        context_text_attachment(context, "pr_description_text", _PR_DESCRIPTION_ATTACHMENT),
-        context_text_attachment(context, "pr_diff_text", _PR_DIFF_ATTACHMENT),
-        context_text_attachment(
-            {"spec_context_text": spec_context_attachment},
-            "spec_context_text",
-            _SPEC_CONTEXT_ATTACHMENT,
-        ),
+        text_attachment(_PR_DESCRIPTION_ATTACHMENT, pr_description_text),
+        text_attachment(_PR_DIFF_ATTACHMENT, pr_diff_text),
+        text_attachment(_SPEC_CONTEXT_ATTACHMENT, spec_context_attachment),
     ]
 
 

@@ -38,9 +38,9 @@ from oz.helpers import (
     WorkflowProgressComment,
 )
 from oz.oz_client import skill_file_path
+from oz.attachments import text_attachment
 from .attachments import (
     Attachment,
-    context_text_attachment,
     payload_without_fields,
 )
 
@@ -172,25 +172,19 @@ def build_create_spec_prompt(
 
 
 def create_spec_context_attachments(context: Mapping[str, Any]) -> list[Attachment]:
+    issue_body = context.get("issue_body")
+    if not isinstance(issue_body, str) or not issue_body:
+        issue_body = "No description provided."
+    comments_text = context.get("comments_text")
+    if not isinstance(comments_text, str) or not comments_text:
+        comments_text = "- None"
+    triggering_comment_text = context.get("triggering_comment_text")
+    if not isinstance(triggering_comment_text, str) or not triggering_comment_text:
+        triggering_comment_text = "- None"
     return [
-        context_text_attachment(
-            context,
-            "issue_body",
-            _ISSUE_BODY_ATTACHMENT,
-            default="No description provided.",
-        ),
-        context_text_attachment(
-            context,
-            "comments_text",
-            _ISSUE_COMMENTS_ATTACHMENT,
-            default="- None",
-        ),
-        context_text_attachment(
-            context,
-            "triggering_comment_text",
-            _TRIGGERING_COMMENT_ATTACHMENT,
-            default="- None",
-        ),
+        text_attachment(_ISSUE_BODY_ATTACHMENT, issue_body),
+        text_attachment(_ISSUE_COMMENTS_ATTACHMENT, comments_text),
+        text_attachment(_TRIGGERING_COMMENT_ATTACHMENT, triggering_comment_text),
     ]
 
 

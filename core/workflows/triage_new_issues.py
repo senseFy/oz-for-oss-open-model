@@ -18,6 +18,7 @@ from oz.helpers import (
     issue_has_prior_triage,
     WorkflowProgressComment,
 )
+from oz.attachments import text_attachment
 from oz.repo_local import (
     format_repo_local_prompt_section,
     repo_local_skill_path_for_dispatch,
@@ -31,7 +32,6 @@ from oz.triage import (
 from .attachments import (
     Attachment,
     payload_without_fields,
-    text_context_attachment,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,20 +272,33 @@ def build_triage_prompt(
 
 
 def triage_context_attachments(context: Mapping[str, Any]) -> list[Attachment]:
+    issue_body = context.get("issue_body")
+    if not isinstance(issue_body, str) or not issue_body:
+        issue_body = "No description provided."
+    original_report = context.get("original_report")
+    if not isinstance(original_report, str) or not original_report:
+        original_report = "No original issue report provided."
+    comments_text = context.get("comments_text")
+    if not isinstance(comments_text, str) or not comments_text:
+        comments_text = "- None"
+    triggering_comment_text = context.get("triggering_comment_text")
+    if not isinstance(triggering_comment_text, str) or not triggering_comment_text:
+        triggering_comment_text = "- None"
+    repository_triage_context = json.dumps(
+        {
+            "triage_config": dict(context.get("triage_config") or {}),
+            "template_context": dict(context.get("template_context") or {}),
+        },
+        indent=2,
+    )
     return [
-        text_context_attachment(_ISSUE_BODY_ATTACHMENT, context.get("issue_body") or "No description provided."),
-        text_context_attachment(_ORIGINAL_REPORT_ATTACHMENT, context.get("original_report") or "No original issue report provided."),
-        text_context_attachment(_ISSUE_COMMENTS_ATTACHMENT, context.get("comments_text") or "- None"),
-        text_context_attachment(_TRIGGERING_COMMENT_ATTACHMENT, context.get("triggering_comment_text") or "- None"),
-        text_context_attachment(
+        text_attachment(_ISSUE_BODY_ATTACHMENT, issue_body),
+        text_attachment(_ORIGINAL_REPORT_ATTACHMENT, original_report),
+        text_attachment(_ISSUE_COMMENTS_ATTACHMENT, comments_text),
+        text_attachment(_TRIGGERING_COMMENT_ATTACHMENT, triggering_comment_text),
+        text_attachment(
             _REPOSITORY_TRIAGE_CONTEXT_ATTACHMENT,
-            json.dumps(
-                {
-                    "triage_config": dict(context.get("triage_config") or {}),
-                    "template_context": dict(context.get("template_context") or {}),
-                },
-                indent=2,
-            ),
+            repository_triage_context,
             mime_type="application/json",
         ),
     ]
