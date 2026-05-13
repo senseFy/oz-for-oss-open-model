@@ -50,6 +50,14 @@ The `respond-to-pr-comment` workflow handles `@oz-agent` mentions on PR conversa
 
 Each reusable role can have a repo-local companion skill, such as [`review-pr-local`](../.agents/skills/review-pr-local/SKILL.md), [`review-spec-local`](../.agents/skills/review-spec-local/SKILL.md), [`triage-issue-local`](../.agents/skills/triage-issue-local/SKILL.md), and [`dedupe-issue-local`](../.agents/skills/dedupe-issue-local/SKILL.md). The prompt helpers detect these files in the consuming repository and reference them when present, while absent or frontmatter-only companions are treated as no-op.
 
+## Self-improvement loops
+
+The `update-*` skills can be used by a [scheduled Oz agent](https://docs.warp.dev/agent-platform/cloud-agents/triggers/scheduled-agents-quickstart/) to improve your repo-local skills based on recent human feedback in GitHub.
+
+[`update-triage`](../.agents/skills/update-triage/SKILL.md) learns from maintainer re-labels, re-opens, and follow-up comments on triaged issues. [`update-pr-review`](../.agents/skills/update-pr-review/SKILL.md) learns from replies to agent-authored PR review comments and broader reviewer feedback. [`update-dedupe`](../.agents/skills/update-dedupe/SKILL.md) learns from repeated closed-as-duplicate signals that point to the same canonical issue.
+
+Each loop has a narrow write surface and keeps the core cross-repo skills stable. When a repeated signal is strong enough, the scheduled run updates only the relevant repo-local companion, and in the triage case may also update the issue label taxonomy.
+
 ## Non-agent webhook paths
 
 Some routed webhook branches perform deterministic GitHub mutations without dispatching an Oz run:
