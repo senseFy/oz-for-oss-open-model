@@ -193,8 +193,17 @@ class ReviewWorkflow(BaseWorkflow):
     workflow = WORKFLOW_REVIEW_PR
     config_name = WORKFLOW_REVIEW_PR
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch | None:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+        ownership_github_client: Any | None = None,
+    ) -> WorkflowDispatch | None:
+        import os
         from oz.helpers import format_review_start_line  # type: ignore[import-not-found]
+        from oz.ownership import DEFAULT_OWNERSHIP_REPO  # type: ignore[import-not-found]
         from workflows.review_pr import (  # type: ignore[import-not-found]
             build_review_prompt_for_dispatch,
             enforce_pr_issue_state_for_review,
@@ -241,6 +250,31 @@ class ReviewWorkflow(BaseWorkflow):
             explicit_issue_numbers=_resolve_linked_issue_numbers(payload),
         ):
             return None
+        # Resolve the ownership-areas repo handle. The webhook wiring
+        # reuses the payload installation token so we can pull
+        # ``warp-ownership`` over the GitHub App token when the org-wide
+        # install covers the ownership repo. The repo slug itself comes
+        # from ``WARP_OWNERSHIP_REPO`` with a fallback to
+        # ``warpdotdev/warp-ownership``. Failures here are logged and
+        # treated as "ownership areas unavailable" so the review still
+        # dispatches against the legacy STAKEHOLDERS prompt.
+        ownership_repo_handle: Any | None = None
+        if ownership_github_client is not None:
+            ownership_repo_slug = (
+                os.environ.get("WARP_OWNERSHIP_REPO", "").strip()
+                or DEFAULT_OWNERSHIP_REPO
+            )
+            try:
+                ownership_repo_handle = ownership_github_client.get_repo(
+                    ownership_repo_slug
+                )
+            except Exception:
+                logger.exception(
+                    "review-pr: failed to resolve ownership-areas repo %s; "
+                    "falling back to STAKEHOLDERS",
+                    ownership_repo_slug,
+                )
+                ownership_repo_handle = None
         context = gather_review_context(
             repo_handle,
             owner=owner,
@@ -249,6 +283,7 @@ class ReviewWorkflow(BaseWorkflow):
             trigger_source=trigger_source,
             requester=requester,
             workspace_path=workspace_path or Path("/tmp"),
+            ownership_repo_handle=ownership_repo_handle,
         )
         return WorkflowDispatch(
             workflow=self.workflow,
@@ -304,7 +339,19 @@ class RespondWorkflow(BaseWorkflow):
             return False
         return True
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch | None:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+        ownership_github_client: Any | None = None,
+    ) -> WorkflowDispatch | None:
+        # ``ownership_github_client`` is unused by this workflow; the
+        # parameter exists to satisfy the :class:`AgentWorkflow` protocol
+        # so a single ``dispatch_request_for_workflow`` can fan out to
+        # every workflow without per-workflow plumbing.
+        del ownership_github_client
         from workflows.respond_to_pr_comment import build_pr_comment_prompt, gather_pr_comment_context  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
@@ -387,7 +434,15 @@ class VerifyWorkflow(BaseWorkflow):
     workflow = WORKFLOW_VERIFY_PR_COMMENT
     config_name = WORKFLOW_VERIFY_PR_COMMENT
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+        ownership_github_client: Any | None = None,
+    ) -> WorkflowDispatch:
+        del ownership_github_client
         from workflows.verify_pr_comment import build_verification_prompt, gather_verify_context  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
@@ -462,7 +517,15 @@ class TriageWorkflow(BaseWorkflow):
     workflow = WORKFLOW_TRIAGE_NEW_ISSUES
     config_name = WORKFLOW_TRIAGE_NEW_ISSUES
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+        ownership_github_client: Any | None = None,
+    ) -> WorkflowDispatch:
+        del ownership_github_client
         from oz.helpers import format_triage_start_line, triggering_comment_prompt_text  # type: ignore[import-not-found]
         from workflows.triage_new_issues import build_triage_prompt_for_dispatch, gather_triage_context  # type: ignore[import-not-found]
 
@@ -522,7 +585,15 @@ class CreateSpecWorkflow(BaseWorkflow):
     workflow = WORKFLOW_CREATE_SPEC_FROM_ISSUE
     config_name = WORKFLOW_CREATE_SPEC_FROM_ISSUE
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+        ownership_github_client: Any | None = None,
+    ) -> WorkflowDispatch:
+        del ownership_github_client
         from oz.helpers import triggering_comment_prompt_text  # type: ignore[import-not-found]
         from workflows.create_spec_from_issue import (
             SPEC_DRIVEN_IMPLEMENTATION_SKILL,
@@ -577,7 +648,15 @@ class CreateImplementationWorkflow(BaseWorkflow):
     workflow = WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
     config_name = WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+        ownership_github_client: Any | None = None,
+    ) -> WorkflowDispatch:
+        del ownership_github_client
         from oz.helpers import triggering_comment_prompt_text  # type: ignore[import-not-found]
         from workflows.create_implementation_from_issue import (
             IMPLEMENT_SPECS_SKILL,
@@ -631,7 +710,15 @@ class PlanApprovedWorkflow(CreateImplementationWorkflow):
     workflow = WORKFLOW_PLAN_APPROVED
     config_name = WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+        ownership_github_client: Any | None = None,
+    ) -> WorkflowDispatch:
+        del ownership_github_client
         from oz.helpers import resolve_issue_number_for_pr  # type: ignore[import-not-found]
         from workflows.create_implementation_from_issue import (
             IMPLEMENT_SPECS_SKILL,

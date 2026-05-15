@@ -1,6 +1,8 @@
 from __future__ import annotations
 import fnmatch
+import json
 import logging
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from textwrap import dedent
@@ -22,6 +24,12 @@ from oz.helpers import (
     resolve_spec_context_for_pr_via_api,
     WorkflowProgressComment,
 )
+from oz.ownership import (
+    OwnershipArea,
+    format_ownership_areas_for_prompt,
+    load_ownership_areas_from_repo,
+    ownership_area_lookup,
+)
 from oz.repo_local import (
     format_repo_local_prompt_section,
     repo_local_skill_path_for_dispatch,
@@ -41,6 +49,13 @@ from oz.triage import (
     format_stakeholders_for_prompt,
     load_stakeholders_from_repo,
 )
+
+# Random source used to pick one owner uniformly when a matched
+# ownership area has more than one eligible owner. ``SystemRandom`` is
+# used so the choice is non-deterministic across runs but uniform across
+# the surviving owners, giving a simple round-robin-equivalent
+# load-balance across an area's owners over time.
+_RANDOM = random.SystemRandom()
 
 WORKFLOW_NAME = "review-pull-request"
 
@@ -498,24 +513,109 @@ def _deterministic_reviewer_from_stakeholders(
     return []
 
 
+def _resolve_reviewer_from_ownership_area(
+    review: Mapping[str, Any],
+    *,
+    ownership_areas: list[OwnershipArea],
+    pr_author_login: str,
+) -> list[str]:
+    """Resolve a single reviewer from the agent's ``recommended_area`` field.
+
+    Returns ``[]`` when the agent did not commit to a single ownership
+    area (missing, empty, non-string, or unknown name), when the area
+    has no owners after excluding the PR author, or when the parsed
+    ownership-areas list is empty. The caller is expected to fall back
+    to STAKEHOLDERS in those cases.
+    """
+    raw_area = review.get("recommended_area") if isinstance(review, Mapping) else None
+    area_name = raw_area.strip() if isinstance(raw_area, str) else ""
+    if not area_name:
+        return []
+   
+    lookup = ownership_area_lookup(ownership_areas)
+    owners = lookup.get(area_name)
+    if owners is None:
+        # Defense-in-depth: this branch should be unreachable in
+        # production because ``validate_review_json.py`` (run by the
+        # agent inside the cloud environment before uploading
+        # ``review.json``) rejects any ``recommended_area`` that isn't
+        # in the canonical ownership-areas list. We keep the
+        # fall-through to STAKEHOLDERS so a control-plane bug or a
+        # legacy artifact never blocks the review apply step.
+        logger.warning(
+            "review-pr: agent returned recommended_area %r which is not in the parsed "
+            "ownership-areas list; validate_review_json.py should have rejected this. "
+            "Falling back to STAKEHOLDERS.",
+            area_name,
+        )
+        return []
+    author_key = (pr_author_login or "").strip().lower()
+    eligible: list[str] = []
+    seen: set[str] = set()
+    for owner in owners:
+        login = _normalize_reviewer_login(owner, pr_author_login=pr_author_login)
+        if not login:
+            continue
+        key = login.lower()
+        if key == author_key or key in seen:
+            continue
+        seen.add(key)
+        eligible.append(login)
+    if not eligible:
+        logger.info(
+            "review-pr: ownership area %r had no eligible owners after excluding PR author %r; "
+            "falling back to STAKEHOLDERS",
+            area_name,
+            pr_author_login,
+        )
+        return []
+        
+    # Random selection is used here to ensure we load balance reviews among all eligible area owners,
+    # instead of always picking the same person when multiple owners are present.
+    if len(eligible) == 1:
+        choice = eligible[0]
+    else:
+        choice = _RANDOM.choice(eligible)
+ 
+    logger.info(
+        "review-pr: matched ownership area %r -> reviewer %s (eligible owners: %s)",
+        area_name,
+        choice,
+        eligible,
+    )
+    return [choice]
+
+
 def _resolve_recommended_reviewers(
     review: Mapping[str, Any],
     *,
-    stakeholder_entries: list[dict[str, Any]],
-    changed_paths: list[str],
+    ownership_areas: list[OwnershipArea],
+    repo_handle: Any,
     pr_author_login: str,
+    changed_paths: list[str],
 ) -> list[str]:
-    """Validate the agent's single reviewer or use STAKEHOLDERS fallback."""
-    allowed_logins = _stakeholder_logins(stakeholder_entries)
-    reviewers_payload = review.get("recommended_reviewers")
-    if isinstance(reviewers_payload, list) and len(reviewers_payload) == 1:
-        login = _normalize_reviewer_login(
-            reviewers_payload[0],
-            pr_author_login=pr_author_login,
-            allowed_logins=allowed_logins,
-        )
-        if login:
-            return [login]
+    """Resolve a single reviewer from ownership areas, falling back to STAKEHOLDERS.
+
+    Validation flow:
+    1. Try to match the agent-supplied ``recommended_area`` against the
+       parsed ownership-areas list. On match, pick one eligible owner
+       uniformly at random.
+    2. If ownership-areas resolution yields no reviewer (empty list,
+       agent gave up, unknown area, or area has no eligible owners),
+       lazily fetch ``.github/STAKEHOLDERS`` from the consuming repo and
+       use :func:`_deterministic_reviewer_from_stakeholders` as the
+       deterministic last-resort fallback.
+    3. If STAKEHOLDERS also yields nothing, return ``[]`` so the caller
+       completes the review without requesting a human reviewer.
+    """
+    reviewer = _resolve_reviewer_from_ownership_area(
+        review,
+        ownership_areas=ownership_areas,
+        pr_author_login=pr_author_login,
+    )
+    if reviewer:
+        return reviewer
+    stakeholder_entries = load_stakeholders_from_repo(repo_handle) if repo_handle is not None else []
     fallback = _deterministic_reviewer_from_stakeholders(
         stakeholder_entries,
         changed_paths=changed_paths,
@@ -524,12 +624,12 @@ def _resolve_recommended_reviewers(
     if fallback:
         logger.info(
             "review-pr: using deterministic STAKEHOLDERS fallback reviewer %s "
-            "because recommended_reviewers was not a single eligible login",
+            "because ownership-areas resolution yielded no eligible reviewer",
             fallback,
         )
     else:
         logger.warning(
-            "review-pr: no eligible reviewer found in recommended_reviewers or STAKEHOLDERS "
+            "review-pr: no eligible reviewer found in ownership areas or STAKEHOLDERS "
             "after excluding PR author %r",
             pr_author_login,
         )
@@ -635,8 +735,36 @@ def _dismiss_stale_oz_changes_requested_reviews(
 def _format_non_member_review_section(
     *,
     pr_author_login: str,
-    stakeholders_block: str,
+    ownership_areas_block: str = "",
+    ownership_areas_loaded: bool = False,
+    stakeholders_block: str = "",
 ) -> str:
+    """Render the non-member reviewer-selection section of the agent prompt.
+
+    When ``ownership_areas_loaded`` is true, instruct the agent to return
+    a single ``recommended_area`` from the parsed ``warpdotdev/warp-ownership``
+    list. Vercel deterministically maps that area to one owner at apply
+    time. When ownership areas are unavailable (fetch failure, empty
+    repo), fall back to the legacy STAKEHOLDERS prompt block where the
+    agent returns ``recommended_reviewers`` directly.
+    """
+    if ownership_areas_loaded:
+        return dedent(
+            f"""
+            Non-Member Reviewer Selection:
+            - The PR author (@{pr_author_login or 'unknown'}) is not a repository member or collaborator, so the workflow should request exactly one human reviewer when your `verdict` is `"APPROVE"`.
+            - If your `verdict` is `"REJECT"`, the workflow will post a GitHub `REQUEST_CHANGES` review and will not request a human reviewer.
+            - Return a `recommended_area` field alongside `verdict`, `body`, and `comments`. Example: {{"recommended_area": "MCP (Model Context Protocol)"}}.
+            - `recommended_area` must be EXACTLY ONE area name copied verbatim from the "Ownership Areas" list below. Match the PR title, body, and changed files to the area whose `matches:` description best describes the change.
+            - Do NOT invent area names. Do NOT return multiple names, a list, or owner handles. The workflow itself looks up the owners for the chosen area and randomly selects one.
+            - If the PR touches multiple areas, pick the **primary** area whose `matches:` description best fits the bulk of the change.
+            - If you cannot confidently map the PR to a single area (cross-cutting, ambiguous, or no clear match), set `recommended_area` to the empty string `""`. The workflow will fall back to a deterministic reviewer chosen from `.github/STAKEHOLDERS` rather than guessing.
+            - Do not call GitHub yourself to post the review or request reviewers.
+
+            Ownership Areas (from `warpdotdev/warp-ownership`):
+            {ownership_areas_block}
+            """
+        ).strip()
     return dedent(
         f"""
         Non-Member Reviewer Selection:
@@ -778,6 +906,14 @@ class ReviewContext(TypedDict):
     pr_author_login: str
     stakeholder_logins: list[str]
     stakeholder_entries: list[dict[str, Any]]
+    # Ownership-areas snapshot taken at dispatch time. ``ownership_areas`` is
+    # a JSON-serializable list of ``{name, owners, matches}`` dicts derived
+    # from ``warpdotdev/warp-ownership/ownership-areas/*.md`` via
+    # :func:`oz.ownership.load_ownership_areas_from_repo`. The apply step
+    # rebuilds :class:`OwnershipArea` instances from this snapshot to map
+    # the agent's ``recommended_area`` back to an owner deterministically.
+    ownership_areas: list[dict[str, Any]]
+    ownership_areas_loaded: bool
     progress_comment_id: int
 
 
@@ -823,6 +959,7 @@ def gather_review_context(
     requester: str,
     workspace_path: Path,
     progress_comment_id: int = 0,
+    ownership_repo_handle: Any = None,
 ) -> ReviewContext:
     """Gather the PR-side context required to dispatch a review run.
 
@@ -887,18 +1024,52 @@ def gather_review_context(
     )
     non_member_review_section = ""
     stakeholders_entries: list[dict[str, Any]] = []
+    ownership_areas_serialized: list[dict[str, Any]] = []
+    ownership_areas_loaded = False
     if is_non_member:
-        # Load ``.github/STAKEHOLDERS`` directly from the repository
-        # that triggered the webhook. The Vercel function does not
-        # check out the consuming repo, so the workspace-backed
-        # ``load_stakeholders`` would always return an empty list and
-        # silently disable non-member reviewer selection.
-        stakeholders_entries = load_stakeholders_from_repo(github)
-        stakeholders_block = format_stakeholders_for_prompt(stakeholders_entries)
-        non_member_review_section = _format_non_member_review_section(
-            pr_author_login=pr_author_login,
-            stakeholders_block=stakeholders_block,
-        )
+        # Prefer the canonical ``warpdotdev/warp-ownership`` mapping when
+        # an ownership-repo client is wired in. The agent picks one area
+        # from the parsed list; Vercel resolves the area to an owner
+        # deterministically at apply time.
+        ownership_areas: list[OwnershipArea] = []
+        if ownership_repo_handle is not None:
+            try:
+                ownership_areas = load_ownership_areas_from_repo(
+                    ownership_repo_handle
+                )
+            except Exception:
+                # Fail open: any unexpected error pulling warp-ownership
+                # falls through to the STAKEHOLDERS prompt block below.
+                logger.exception(
+                    "review-pr: failed to load ownership areas; falling back to STAKEHOLDERS"
+                )
+                ownership_areas = []
+        if ownership_areas:
+            ownership_areas_loaded = True
+            ownership_areas_serialized = [
+                area.to_dict() for area in ownership_areas
+            ]
+            ownership_areas_block = format_ownership_areas_for_prompt(
+                ownership_areas
+            )
+            non_member_review_section = _format_non_member_review_section(
+                pr_author_login=pr_author_login,
+                ownership_areas_block=ownership_areas_block,
+                ownership_areas_loaded=True,
+            )
+        else:
+            # Load ``.github/STAKEHOLDERS`` directly from the repository
+            # that triggered the webhook. The Vercel function does not
+            # check out the consuming repo, so the workspace-backed
+            # ``load_stakeholders`` would always return an empty list and
+            # silently disable non-member reviewer selection.
+            stakeholders_entries = load_stakeholders_from_repo(github)
+            stakeholders_block = format_stakeholders_for_prompt(stakeholders_entries)
+            non_member_review_section = _format_non_member_review_section(
+                pr_author_login=pr_author_login,
+                stakeholders_block=stakeholders_block,
+                ownership_areas_loaded=False,
+            )
     pr_description_text = _format_pr_description(
         pr_number=pr_number,
         pr_title=str(pr.title or ""),
@@ -947,8 +1118,31 @@ def gather_review_context(
         pr_author_login=pr_author_login,
         stakeholder_logins=sorted(_stakeholder_logins(stakeholders_entries)),
         stakeholder_entries=stakeholders_entries,
+        ownership_areas=ownership_areas_serialized,
+        ownership_areas_loaded=bool(ownership_areas_loaded),
         progress_comment_id=int(progress_comment_id or 0),
     )
+
+
+def _format_ownership_areas_json_block(
+    ownership_areas: Any,
+) -> str:
+    """Return a JSON array of ``{"name": ...}`` entries for inlining.
+
+    The dispatch prompt inlines this block so the cloud agent can copy
+    it verbatim to ``ownership_areas.json``. The validator reads that
+    file via ``--ownership-areas`` and uses the area names to check
+    ``recommended_area`` against the canonical list.
+    """
+    names: list[dict[str, str]] = []
+    if isinstance(ownership_areas, list):
+        for entry in ownership_areas:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if isinstance(name, str) and name.strip():
+                names.append({"name": name})
+    return json.dumps(names, indent=2, ensure_ascii=False)
 
 
 def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
@@ -965,6 +1159,22 @@ def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
         if spec_context_text
         else "Spec Context: No approved or repository spec context was found for this PR.\n"
     )
+    ownership_areas_loaded = bool(context.get("ownership_areas_loaded"))
+    ownership_areas_json = _format_ownership_areas_json_block(
+        context.get("ownership_areas")
+    )
+    if ownership_areas_loaded:
+        ownership_artifact_instruction = (
+            "- Before validating, also write the Ownership Areas JSON block below to `ownership_areas.json` exactly as shown so the validator can check `recommended_area` against the canonical list.\n        "
+        )
+        validator_command = (
+            "python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff pr_diff.txt --ownership-areas ownership_areas.json"
+        )
+    else:
+        ownership_artifact_instruction = ""
+        validator_command = (
+            "python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff pr_diff.txt"
+        )
     prompt = dedent(
         f"""
         Review pull request #{context['pr_number']} in repository {context['owner']}/{context['repo']}.
@@ -990,7 +1200,7 @@ def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
         - Do not run `git fetch`, `git checkout`, `gh`, ad-hoc GitHub API calls, or the spec-context helper from this run. The control plane already gathered the GitHub-backed context and this run does not receive `GH_TOKEN`.
         - Only include comments for files and lines that exist in the inlined PR diff. Every inline comment must map to an explicit `[NEW:n]`, `[OLD:n]`, or `[OLD:n,NEW:m]` annotation from the inlined diff. If feedback does not map to a diff file or commentable diff line, put it in top-level `body` instead of `comments`.
         - Before validating, write the inlined PR diff exactly to `pr_diff.txt` so the bundled `validate_review_json.py` script can compare `review.json` against the same annotated diff you reviewed.
-        - Run `python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff pr_diff.txt` after creating `review.json`, or locate the bundled `validate_review_json.py` under the packaged `review-pr` skill directory and run that copy. Fix every reported error before upload.
+        {ownership_artifact_instruction}- Run `{validator_command}` after creating `review.json`, or locate the bundled `validate_review_json.py` under the packaged `review-pr` skill directory and run that copy with the same arguments. Fix every reported error before upload.
         - Do not post the final review directly.
         - After you create and validate `review.json`, upload it as an artifact via `oz artifact upload {_REVIEW_OUTPUT_FILENAME}` (or `oz-preview artifact upload {_REVIEW_OUTPUT_FILENAME}` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
 
@@ -1017,6 +1227,14 @@ def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
     non_member_section = str(context.get("non_member_review_section") or "").rstrip()
     if non_member_section:
         prompt = prompt + "\n\n" + non_member_section
+    if ownership_areas_loaded:
+        prompt = (
+            prompt
+            + "\n\nOwnership Areas JSON (write verbatim to `ownership_areas.json` before validating):\n"
+            + "----------------\n"
+            + ownership_areas_json
+            + "\n----------------"
+        )
     return prompt
 
 
@@ -1088,11 +1306,25 @@ def apply_review_result(
         else "COMMENT"
     )
     if is_non_member and verdict == _VERDICT_APPROVE:
+        ownership_areas = [
+            OwnershipArea(
+                name=str(entry.get("name") or ""),
+                owners=[
+                    str(owner_login)
+                    for owner_login in (entry.get("owners") or [])
+                    if isinstance(owner_login, str) and owner_login.strip()
+                ],
+                matches=str(entry.get("matches") or ""),
+            )
+            for entry in (context.get("ownership_areas") or [])
+            if isinstance(entry, dict) and entry.get("name")
+        ]
         recommended_reviewers = _resolve_recommended_reviewers(
             result,
-            stakeholder_entries=stakeholder_entries,
-            changed_paths=list(diff_line_map),
+            ownership_areas=ownership_areas,
+            repo_handle=github,
             pr_author_login=pr_author_login,
+            changed_paths=list(diff_line_map),
         )
     else:
         recommended_reviewers = []

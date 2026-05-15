@@ -49,6 +49,7 @@ class AgentWorkflow(Protocol):
         *,
         github_client: Any,
         workspace_path: Any = None,
+        ownership_github_client: Any | None = None,
     ) -> WorkflowDispatch | None: ...
 
     def load_artifact(self, run_id: str) -> dict[str, Any]: ...
