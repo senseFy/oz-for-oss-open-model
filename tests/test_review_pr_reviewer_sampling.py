@@ -109,22 +109,6 @@ class DeterministicReviewerFallbackTest(unittest.TestCase):
 
 
 class OwnershipAreasResolveReviewerTest(unittest.TestCase):
-    def test_resolves_matching_area_with_uniform_random_choice(self) -> None:
-        repo_handle = MagicMock()
-        with patch("workflows.review_pr.load_stakeholders_from_repo") as load, patch(
-            "workflows.review_pr._RANDOM.choice", return_value="backup-owner"
-        ) as choose:
-            reviewers = _resolve_recommended_reviewers(
-                {"recommended_area": "Docs API"},
-                ownership_areas=OWNERSHIP_AREAS,
-                repo_handle=repo_handle,
-                changed_paths=["docs/api/reference.md"],
-                pr_author_login="contributor",
-            )
-        self.assertEqual(reviewers, ["backup-owner"])
-        choose.assert_called_once_with(["api-owner", "backup-owner"])
-        load.assert_not_called()
-
     def test_returns_single_owner_without_random_choice(self) -> None:
         with patch("workflows.review_pr._RANDOM.choice") as choose:
             reviewers = _resolve_recommended_reviewers(

@@ -146,23 +146,12 @@ def build_builder_registry(
     *,
     github_client_factory,
     workspace_path: Path | None = None,
-    ownership_github_client_factory=None,
 ) -> Mapping[str, PromptBuilder]:
-    """Build the prompt-builder registry consumed by :func:`api.webhook.process_webhook_request`.
-
-    *ownership_github_client_factory* is an optional zero-argument
-    callable that returns a :class:`github.Github` minted against the
-    installation token for ``warpdotdev/warp-ownership`` (or the slug
-    configured via ``WARP_OWNERSHIP_REPO``). When omitted, ownership
-    areas are unavailable and the review workflow falls back to the
-    legacy STAKEHOLDERS prompt for non-member PRs.
-    """
     return {
         name: prompt_builder_for_workflow(
             workflow,
             github_client_factory=github_client_factory,
             workspace_path=workspace_path,
-            ownership_github_client_factory=ownership_github_client_factory,
         )
         for name, workflow in build_workflow_registry().items()
     }

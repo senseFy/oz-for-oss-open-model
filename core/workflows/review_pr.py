@@ -615,6 +615,7 @@ def _resolve_recommended_reviewers(
     )
     if reviewer:
         return reviewer
+    # Lazily load STAKEHOLDERS only if no reviewer found in ownership areas.
     stakeholder_entries = load_stakeholders_from_repo(repo_handle) if repo_handle is not None else []
     fallback = _deterministic_reviewer_from_stakeholders(
         stakeholder_entries,

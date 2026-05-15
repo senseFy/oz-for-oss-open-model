@@ -307,7 +307,7 @@ def _load_ownership_area_names(path: Path) -> list[str] | None:
     """Return the parsed ownership-area names from *path*.
 
     The control plane writes the dispatch-time ownership-areas list as
-    JSON next to ``pr_diff.txt`` so the validator can check the agent's
+    JSON for the validator to check the agent's
     ``recommended_area`` against the same canonical list inlined in the
     prompt. Returns ``None`` when the file is missing so the validator
     still runs in non-cloud contexts (local invocations, member PRs,

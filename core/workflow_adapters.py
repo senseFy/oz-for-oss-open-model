@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 GithubClientFactory = Callable[[int], Any]
-OwnershipGithubClientFactory = Callable[[], Any]
 
 
 def _client_factory(install_id: int, factory: GithubClientFactory) -> Any:
@@ -110,13 +109,11 @@ def dispatch_request_for_workflow(
     *,
     github_client: Any,
     workspace_path: Path | None = None,
-    ownership_github_client: Any | None = None,
 ) -> DispatchRequest | None:
     dispatch: WorkflowDispatch = workflow.build_dispatch(
         payload,
         github_client=github_client,
         workspace_path=workspace_path,
-        ownership_github_client=ownership_github_client,
     )
     if dispatch is None:
         return None
@@ -143,33 +140,13 @@ def prompt_builder_for_workflow(
     *,
     github_client_factory: Callable[[], Any],
     workspace_path: Path | None = None,
-    ownership_github_client_factory: OwnershipGithubClientFactory | None = None,
 ) -> PromptBuilder:
-    """Adapt an :class:`AgentWorkflow` to the :class:`PromptBuilder` contract.
-
-    *ownership_github_client_factory* is an optional callable that mints
-    a :class:`Github` instance with access to ``warpdotdev/warp-ownership``
-    (or the slug configured via ``WARP_OWNERSHIP_REPO``). When provided,
-    ``ReviewWorkflow.build_dispatch`` uses it to fetch ownership-area
-    definitions for non-member PRs.
-    """
     def _adapter(payload: Mapping[str, Any]) -> DispatchRequest | None:
-        ownership_client: Any | None = None
-        if ownership_github_client_factory is not None:
-            try:
-                ownership_client = ownership_github_client_factory()
-            except Exception:
-                logger.exception(
-                    "Failed to mint ownership-repo GitHub client; "
-                    "falling back to STAKEHOLDERS for non-member PRs"
-                )
-                ownership_client = None
         return dispatch_request_for_workflow(
             workflow,
             payload,
             github_client=github_client_factory(),
             workspace_path=workspace_path,
-            ownership_github_client=ownership_client,
         )
 
     return _adapter

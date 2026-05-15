@@ -30,11 +30,13 @@ logger = logging.getLogger(__name__)
 # markdown files. Mirrors the layout established by the repo's README.
 OWNERSHIP_AREAS_DIR = "ownership-areas"
 
-# Default repo slug the control plane reads ownership areas from. The
-# Vercel runtime can override via ``WARP_OWNERSHIP_REPO`` if a fork uses
-# a different slug.
-DEFAULT_OWNERSHIP_REPO = "warpdotdev/warp-ownership"
+# Repo slug the control plane reads ownership areas from. Hardcoded
+# because this integration is intentionally scoped to the warpdotdev
+# org's ownership repo; consumers in other orgs fall back to STAKEHOLDERS
+# when the org-wide install doesn't grant access.
+OWNERSHIP_REPO = "warpdotdev/warp-ownership"
 
+# TODO(vkodithala): Consider moving ownership-area definitions to a structured JSON or YAML format in warpdotdev/warp-ownership instead of parsing markdown bullets; current parsing follows feedback-triage-bot precedent but is a bit awkward.
 # Pattern for the area heading. ``###`` followed by the area name.
 _AREA_HEADING_RE = re.compile(r"^###\s+(?P<name>.+?)\s*$")
 # Pattern for the owners bullet. Matches the start of a markdown list item
@@ -222,8 +224,8 @@ def ownership_area_lookup(areas: list[OwnershipArea]) -> dict[str, list[str]]:
 
 
 __all__ = [
-    "DEFAULT_OWNERSHIP_REPO",
     "OWNERSHIP_AREAS_DIR",
+    "OWNERSHIP_REPO",
     "OwnershipArea",
     "format_ownership_areas_for_prompt",
     "load_ownership_areas_from_repo",

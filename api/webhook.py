@@ -418,18 +418,8 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
             cached_client["client"] = _mint_github_client(payload_install_id)
         return cached_client["client"]
 
-    # Reuse the payload-keyed GitHub client for ``warpdotdev/warp-ownership``
-    # access. When the Oz GitHub App is installed org-wide on ``warpdotdev``,
-    # the same token can read both the consuming repo and the ownership
-    # repo, so we avoid minting a second token. For consuming repos in
-    # other orgs (or any install that doesn't cover ``warp-ownership``),
-    # ``load_ownership_areas_from_repo`` catches the resulting
-    # ``GithubException`` / ``UnknownObjectException`` and the review
-    # workflow falls back to the legacy STAKEHOLDERS prompt for non-member
-    # PRs.
     builder_registry = build_builder_registry(
         github_client_factory=_client_for_payload,
-        ownership_github_client_factory=_client_for_payload,
     )
 
     sdk_client = OzAPI(
