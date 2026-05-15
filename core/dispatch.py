@@ -41,9 +41,9 @@ WORKFLOW_ROLES: Mapping[str, str] = {
 # API where to fetch its core skill from via a fully qualified
 # ``<owner>/<repo>:<path>`` spec. Oz-specific workflow skills
 # (``implement-issue``, ``verify-pr``, ``triage-issue``, etc.) remain in
-# ``warpdotdev/oz-for-oss``. Generic base skills (``review-pr``,
-# ``implement-specs``, and the spec-writing skills) come from
-# ``warpdotdev/common-skills``.
+# the workflow-code repository. Generic base skills (``review-pr``,
+# ``implement-specs``, and the spec-writing skills) come from the
+# configured common-skills repository.
 # Forks can override the workflow-code default by setting
 # ``WORKFLOW_CODE_REPOSITORY=owner/repo`` in the Vercel environment so
 # their fork's bundled Oz-specific skills are used instead.

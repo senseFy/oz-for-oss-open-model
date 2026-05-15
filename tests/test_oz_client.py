@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from . import conftest  # noqa: F401
 
-from oz.oz_client import skill_file_path, skill_spec
+from oz.oz_client import skill_display_name, skill_file_path, skill_spec
 
 
 def _write_skill(root: Path, name: str) -> Path:
@@ -19,6 +19,19 @@ def _write_skill(root: Path, name: str) -> Path:
 
 
 class SkillResolutionTest(unittest.TestCase):
+    def test_skill_display_name_strips_qualified_repo_and_path(self) -> None:
+        self.assertEqual(
+            skill_display_name(
+                "warpdotdev/common-skills:.agents/skills/implement-specs/SKILL.md"
+            ),
+            "implement-specs",
+        )
+        self.assertEqual(
+            skill_display_name(".agents/skills/review-pr/SKILL.md"),
+            "review-pr",
+        )
+        self.assertEqual(skill_display_name("write-tech-spec"), "write-tech-spec")
+
     def test_common_skill_resolution_uses_common_skills_repo_without_local_file(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(

@@ -239,6 +239,16 @@ def skill_file_path(skill_name: str) -> str:
     return skill_path
 
 
+def skill_display_name(skill_ref: str) -> str:
+    """Return a prompt-safe bare skill name from a name, path, or qualified spec."""
+    normalized = str(skill_ref or "").strip()
+    if ":" in normalized:
+        _repo_slug, normalized = normalized.split(":", 1)
+    if normalized.endswith("SKILL.md"):
+        return Path(normalized).parent.name
+    return normalized.strip("/")
+
+
 def skill_spec(skill_name: str) -> str:
     """Resolve a skill name into a fully qualified workflow-repo skill spec."""
     resolved_repo_slug, skill_path, _resolved_path = _resolve_skill_location(skill_name)

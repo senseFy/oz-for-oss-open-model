@@ -5,7 +5,7 @@ description: Update the repo-local review-pr-local and review-spec-local compani
 
 # Update PR Review
 
-Use this skill to improve the repo-local review companions `.agents/skills/review-pr-local/SKILL.md` and `.agents/skills/review-spec-local/SKILL.md` from real reviewer feedback. The shared `review-pr` skill from `warpdotdev/common-skills` and the repo-local core `.agents/skills/review-spec/SKILL.md` are the cross-repo contracts and are read-only from this loop.
+Use this skill to improve the repo-local review companions `.agents/skills/review-pr-local/SKILL.md` and `.agents/skills/review-spec-local/SKILL.md` from real reviewer feedback. The shared `review-pr` skill and the repo-local core `.agents/skills/review-spec/SKILL.md` are the cross-repo contracts and are read-only from this loop.
 
 The repository uses two separate review skills: `review-pr` for code pull requests and `review-spec` for spec-only pull requests (PRs where every changed file lives under `specs/`). Feedback from each category of PR should be routed to the corresponding repo-local companion.
 
@@ -18,7 +18,7 @@ This self-improvement loop may only write to:
 
 It must NOT touch:
 
-- the shared `review-pr` skill vendored from `warpdotdev/common-skills`
+- the shared `review-pr` skill
 - `.agents/skills/review-spec/SKILL.md` (the core contract)
 - any file under `.github/issue-triage/` (that taxonomy is owned by the `update-triage` loop)
 - any other core skill

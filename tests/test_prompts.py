@@ -12,10 +12,63 @@ from workflows.respond_to_pr_comment import (
     build_pr_comment_prompt,
     gather_pr_comment_context,
 )
+from workflows.create_implementation_from_issue import build_create_implementation_prompt
+from workflows.create_spec_from_issue import build_create_spec_prompt
 from workflows.verify_pr_comment import build_verification_prompt
 
 
 class FetchContextCommandPromptTest(unittest.TestCase):
+    def test_create_implementation_prompt_uses_bare_shared_skill_names(self) -> None:
+        prompt = build_create_implementation_prompt(
+            owner="acme",
+            repo="widgets",
+            issue_number=42,
+            issue_title="Add retry",
+            issue_labels=[],
+            issue_assignees=[],
+            spec_context_text="Spec body",
+            target_branch="oz-agent/implement-issue-42",
+            default_branch="main",
+            implement_specs_skill_path="warpdotdev/common-skills:.agents/skills/implement-specs/SKILL.md",
+            spec_driven_implementation_skill_path="warpdotdev/common-skills:.agents/skills/spec-driven-implementation/SKILL.md",
+            implement_issue_skill_path=".agents/skills/implement-issue/SKILL.md",
+            coauthor_directives="",
+        )
+        self.assertIn(
+            "Use the shared implementation skills `implement-specs` and "
+            "`spec-driven-implementation`",
+            prompt,
+        )
+        self.assertNotIn("warpdotdev/common-skills", prompt)
+
+    def test_create_spec_prompt_uses_bare_shared_skill_names(self) -> None:
+        prompt = build_create_spec_prompt(
+            owner="acme",
+            repo="widgets",
+            issue_number=42,
+            issue_title="Add retry",
+            issue_labels=[],
+            issue_assignees=[],
+            issue_body="Body",
+            comments_text="",
+            triggering_comment_text="",
+            default_branch="main",
+            branch_name="oz-agent/spec-issue-42",
+            spec_driven_implementation_skill_path="warpdotdev/common-skills:.agents/skills/spec-driven-implementation/SKILL.md",
+            write_product_spec_skill_path="warpdotdev/common-skills:.agents/skills/write-product-spec/SKILL.md",
+            create_product_spec_skill_path=".agents/skills/create-product-spec/SKILL.md",
+            write_tech_spec_skill_path="warpdotdev/common-skills:.agents/skills/write-tech-spec/SKILL.md",
+            create_tech_spec_skill_path=".agents/skills/create-tech-spec/SKILL.md",
+            coauthor_directives="",
+        )
+        self.assertIn(
+            "Use the shared spec-first skill `spec-driven-implementation`",
+            prompt,
+        )
+        self.assertIn("shared product-spec skill `write-product-spec`", prompt)
+        self.assertIn("shared tech-spec skill `write-tech-spec`", prompt)
+        self.assertNotIn("warpdotdev/common-skills", prompt)
+
     def test_respond_prompt_uses_global_repo_arg_before_subcommand(self) -> None:
         prompt = build_pr_comment_prompt(
             {

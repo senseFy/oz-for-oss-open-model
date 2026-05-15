@@ -9,7 +9,7 @@ Implement a GitHub issue for this repository.
 
 ## Overview
 
-This skill is a thin Oz wrapper around the shared implementation skills from `warpdotdev/common-skills`:
+This skill is a thin Oz wrapper around the shared implementation skills:
 
 - `implement-specs`
 - `spec-driven-implementation`
