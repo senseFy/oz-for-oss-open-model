@@ -1,6 +1,6 @@
 ---
 name: create-tech-spec
-description: Create a technical spec from a GitHub issue in this repository by applying the local shared `write-tech-spec` workflow with Oz-specific issue context and output paths. Use when an issue should be turned into a tech spec artifact stored under `specs/GH<issue-number>/tech.md` and the agent should prepare file changes only, without creating commits or pull requests itself unless a cloud workflow explicitly asks for it.
+description: Create a technical spec from a GitHub issue in this repository by applying the shared `write-tech-spec` workflow with Oz-specific issue context and output paths. Use when an issue should be turned into a tech spec artifact stored under `specs/GH<issue-number>/tech.md` and the agent should prepare file changes only, without creating commits or pull requests itself unless a cloud workflow explicitly asks for it.
 ---
 
 # create-tech-spec
@@ -9,11 +9,11 @@ Create a tech spec from a GitHub issue for this repository.
 
 ## Overview
 
-This skill is a thin Oz wrapper around the local shared tech-spec workflow:
+This skill is a thin Oz wrapper around the shared tech-spec workflow from `warpdotdev/common-skills`:
 
-- `.agents/skills/write-tech-spec/SKILL.md`
+- `write-tech-spec`
 
-Use that shared local skill as the base behavior and structure unless this wrapper overrides it. Keep the same emphasis on grounding the plan in current code, documenting relevant files and data flow, explaining tradeoffs, and defining validation.
+Use that shared skill as the base behavior and structure unless this wrapper overrides it. Keep the same emphasis on grounding the plan in current code, documenting relevant files and data flow, explaining tradeoffs, and defining validation.
 
 The Oz-specific differences are:
 
@@ -31,7 +31,7 @@ When available, the product spec at `specs/GH<issue-number>/product.md` should b
 
 ## Workflow
 
-1. Start from the local shared `write-tech-spec` guidance and follow its structure and writing standards unless this wrapper says otherwise.
+1. Start from the shared `write-tech-spec` guidance and follow its structure and writing standards unless this wrapper says otherwise.
 2. Read the issue details carefully. If a product spec exists at `specs/GH<issue-number>/product.md`, read it first to understand the intended behavior. If `issue_comments.txt` exists, review it for clarifications, prior decisions, and design nuance that should influence the tech plan.
 3. Inspect the repository to understand the current implementation and the likely scope of the requested work before writing the spec. Do not guess about current architecture when the code can be inspected directly.
 4. Create or update `specs/GH<issue-number>/tech.md`.

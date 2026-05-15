@@ -37,7 +37,7 @@ from oz.helpers import (
     triggering_comment_prompt_text,
     WorkflowProgressComment,
 )
-from oz.oz_client import skill_file_path
+from oz.oz_client import skill_file_path, skill_spec
 
 WORKFLOW_NAME = "create-spec-from-issue"
 SPEC_DRIVEN_IMPLEMENTATION_SKILL = "spec-driven-implementation"
@@ -145,7 +145,7 @@ def build_create_spec_prompt(
         Cloud Workflow Requirements:
         - You are running in a cloud environment, so the caller cannot read your local diff.
         - Start from the repository default branch `{default_branch}`.
-        - Use the shared spec-first skill `{spec_driven_implementation_skill_path}` from the workflow-code repository as the base workflow for this run.
+        - Use the shared spec-first skill `{spec_driven_implementation_skill_path}` from `warpdotdev/common-skills` as the base workflow for this run.
         - First, read the shared product-spec skill `{write_product_spec_skill_path}`, then read the Oz wrapper skill `{create_product_spec_skill_path}`, and create a product spec at `specs/GH{issue_number}/product.md`.
         - Then, read the shared tech-spec skill `{write_tech_spec_skill_path}`, then read the Oz wrapper skill `{create_tech_spec_skill_path}`, and create a tech spec at `specs/GH{issue_number}/tech.md`.
         - If you produce spec changes, write `pr-metadata.json` at the repository root containing a JSON object with these required fields:
@@ -267,11 +267,11 @@ def gather_create_spec_context(
     )
     coauthor_directives = coauthor_prompt_lines(coauthor_line)
 
-    spec_driven_implementation_skill_path = skill_file_path(
+    spec_driven_implementation_skill_path = skill_spec(
         SPEC_DRIVEN_IMPLEMENTATION_SKILL
     )
-    write_product_spec_skill_path = skill_file_path(WRITE_PRODUCT_SPEC_SKILL)
-    write_tech_spec_skill_path = skill_file_path(WRITE_TECH_SPEC_SKILL)
+    write_product_spec_skill_path = skill_spec(WRITE_PRODUCT_SPEC_SKILL)
+    write_tech_spec_skill_path = skill_spec(WRITE_TECH_SPEC_SKILL)
     create_product_spec_skill_path = skill_file_path(CREATE_PRODUCT_SPEC_SKILL)
     create_tech_spec_skill_path = skill_file_path(CREATE_TECH_SPEC_SKILL)
 

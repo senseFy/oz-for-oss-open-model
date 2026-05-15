@@ -10,8 +10,7 @@ def _load_fetch_github_context():
     script_path = (
         Path(__file__).resolve().parent.parent
         / ".agents"
-        / "skills"
-        / "implement-specs"
+        / "shared"
         / "scripts"
         / "fetch_github_context.py"
     )

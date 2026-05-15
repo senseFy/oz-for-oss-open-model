@@ -1,6 +1,6 @@
 ---
 name: create-product-spec
-description: Create a product spec from a GitHub issue in this repository by applying the local shared `write-product-spec` workflow with Oz-specific issue context and output paths. Use when an issue should be turned into a product spec artifact stored under `specs/GH<issue-number>/product.md` and the agent should prepare file changes only, without creating commits or pull requests itself unless a cloud workflow explicitly asks for it.
+description: Create a product spec from a GitHub issue in this repository by applying the shared `write-product-spec` workflow with Oz-specific issue context and output paths. Use when an issue should be turned into a product spec artifact stored under `specs/GH<issue-number>/product.md` and the agent should prepare file changes only, without creating commits or pull requests itself unless a cloud workflow explicitly asks for it.
 ---
 
 # create-product-spec
@@ -9,11 +9,11 @@ Create a product spec from a GitHub issue for this repository.
 
 ## Overview
 
-This skill is a thin Oz wrapper around the local shared product-spec workflow:
+This skill is a thin Oz wrapper around the shared product-spec workflow from `warpdotdev/common-skills`:
 
-- `.agents/skills/write-product-spec/SKILL.md`
+- `write-product-spec`
 
-Use that shared local skill as the base behavior and structure unless this wrapper overrides it. Keep the same emphasis on precise user-facing behavior, invariants, edge cases, validation, and open questions.
+Use that shared skill as the base behavior and structure unless this wrapper overrides it. Keep the same emphasis on precise user-facing behavior, invariants, edge cases, validation, and open questions.
 
 The Oz-specific differences are:
 
@@ -31,7 +31,7 @@ If a triggering comment or other workflow-provided comment context is present, t
 
 ## Workflow
 
-1. Start from the local shared `write-product-spec` guidance and follow its structure and writing standards unless this wrapper says otherwise.
+1. Start from the shared `write-product-spec` guidance and follow its structure and writing standards unless this wrapper says otherwise.
 2. Read the issue details carefully. If `issue_comments.txt` exists, review it for clarifications, prior decisions, and issue-comment nuance that should influence the spec.
 3. Inspect the repository enough to understand the current user workflow and likely scope before writing the spec.
 4. Create or update `specs/GH<issue-number>/product.md`.

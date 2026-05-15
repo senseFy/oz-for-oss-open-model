@@ -36,14 +36,14 @@ Usage
 
 Set ``GH_TOKEN`` or ``GITHUB_TOKEN`` in the environment. Then::
 
-    python .agents/skills/implement-specs/scripts/fetch_github_context.py issue \\
-        --repo OWNER/REPO --number N
+    python .agents/shared/scripts/fetch_github_context.py --repo OWNER/REPO issue \\
+        --number N
 
-    python .agents/skills/implement-specs/scripts/fetch_github_context.py pr \\
-        --repo OWNER/REPO --number N [--include-diff]
+    python .agents/shared/scripts/fetch_github_context.py --repo OWNER/REPO pr \\
+        --number N [--include-diff]
 
-    python .agents/skills/implement-specs/scripts/fetch_github_context.py pr-diff \\
-        --repo OWNER/REPO --number N
+    python .agents/shared/scripts/fetch_github_context.py --repo OWNER/REPO pr-diff \\
+        --number N
 
 The default repository is the current ``GITHUB_REPOSITORY`` environment
 variable, so ``--repo`` is optional inside workflow runners that set it.

@@ -36,13 +36,13 @@ from oz.helpers import (
     resolve_spec_context_for_issue_via_api,
     WorkflowProgressComment,
 )
-from oz.oz_client import skill_file_path
+from oz.oz_client import skill_file_path, skill_spec
 
 WORKFLOW_NAME = "create-implementation-from-issue"
 IMPLEMENT_SPECS_SKILL = "implement-specs"
 SPEC_DRIVEN_IMPLEMENTATION_SKILL = "spec-driven-implementation"
 IMPLEMENT_ISSUE_SKILL = "implement-issue"
-FETCH_CONTEXT_SCRIPT = ".agents/skills/implement-specs/scripts/fetch_github_context.py"
+FETCH_CONTEXT_SCRIPT = ".agents/shared/scripts/fetch_github_context.py"
 
 
 def _default_implementation_branch_name(issue_number: int) -> str:
@@ -89,7 +89,7 @@ def build_create_implementation_prompt(
         - This script is the only supported way to read issue content during this run. Do not retrieve the issue body, comments, or triggering comment via any other mechanism.
 
         Cloud Workflow Requirements:
-        - Use the shared implementation skills `{implement_specs_skill_path}` and `{spec_driven_implementation_skill_path}` from the workflow-code repository as the base workflow for this run.
+        - Use the shared implementation skills `{implement_specs_skill_path}` and `{spec_driven_implementation_skill_path}` from `warpdotdev/common-skills` as the base workflow for this run.
         - Read the Oz wrapper skill `{implement_issue_skill_path}` and apply its instructions for `spec_context.md`, `issue_comments.txt`, `implementation_summary.md`, and `pr_description.md`.
         - You are running in a cloud environment, so the caller cannot read your local diff.
         - Work on branch `{target_branch}`.
@@ -244,8 +244,8 @@ def gather_create_implementation_context(
     )
     coauthor_directives = coauthor_prompt_lines(coauthor_line)
 
-    implement_specs_skill_path = skill_file_path(IMPLEMENT_SPECS_SKILL)
-    spec_driven_implementation_skill_path = skill_file_path(
+    implement_specs_skill_path = skill_spec(IMPLEMENT_SPECS_SKILL)
+    spec_driven_implementation_skill_path = skill_spec(
         SPEC_DRIVEN_IMPLEMENTATION_SKILL
     )
     implement_issue_skill_path = skill_file_path(IMPLEMENT_ISSUE_SKILL)

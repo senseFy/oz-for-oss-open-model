@@ -30,7 +30,7 @@ from oz.helpers import (
 )
 
 WORKFLOW_NAME = "respond-to-pr-comment"
-FETCH_CONTEXT_SCRIPT = ".agents/skills/implement-specs/scripts/fetch_github_context.py"
+FETCH_CONTEXT_SCRIPT = ".agents/shared/scripts/fetch_github_context.py"
 BRANCH_STRATEGY_PUSH_HEAD = "push-head"
 BRANCH_STRATEGY_FALLBACK_PR_TO_FORK = "fallback-pr-to-fork"
 BRANCH_STRATEGY_BLOCKED = "blocked"
