@@ -79,6 +79,44 @@ _MANUAL_LINKED_ISSUES_QUERY = (
     " }"
     " }"
     " }"
+)
+
+# GraphQL query that walks the issue timeline and collects every
+# ``CrossReferencedEvent`` whose ``source`` is a ``PullRequest``. GitHub
+# records one of these events whenever a PR references the issue —
+# whether by closing keyword, manual link, or plain ``#N`` mention — so
+# the issue-timeline path is the canonical way to find sibling PRs that
+# point at the same issue. We additionally select the PR author and
+# state so the control plane can deterministically pick a same-issue
+# reviewer without needing extra round-trips. See
+# https://docs.github.com/en/graphql/reference/objects#crossreferencedevent
+# and https://docs.github.com/en/graphql/reference/unions#referencedsubject
+# for the schema.
+_ISSUE_CROSS_REFERENCED_PRS_QUERY = (
+    "query($owner: String!, $name: String!, $number: Int!, $after: String) {"
+    " repository(owner: $owner, name: $name) {"
+    " issue(number: $number) {"
+    " timelineItems(first: 100, after: $after, itemTypes: [CROSS_REFERENCED_EVENT]) {"
+    " pageInfo { hasNextPage endCursor }"
+    " nodes {"
+    " __typename"
+    " ... on CrossReferencedEvent {"
+    " isCrossRepository"
+    " source {"
+    " __typename"
+    " ... on PullRequest {"
+    " number"
+    " title"
+    " url"
+    " state"
+    " author { login __typename }"
+    " repository { owner { login } name }"
+    " }"
+    " }"
+    " }"
+    " }"
+    " }"
+    " }"
     " }"
 )
 
@@ -1963,6 +2001,319 @@ def resolve_issue_number_for_pr(
     )
     primary_issue_number = association.get("primary_issue_number")
     return int(primary_issue_number) if isinstance(primary_issue_number, int) else None
+
+
+def _normalize_cross_referenced_pr(
+    node: Any,
+    *,
+    owner: str,
+    repo: str,
+) -> dict[str, Any] | None:
+    """Return a compact same-repo PR record from a ``CrossReferencedEvent`` node.
+
+    Only ``CrossReferencedEvent`` entries whose ``source`` is a
+    ``PullRequest`` from the same ``owner/repo`` are kept. Cross-repo
+    references (e.g. PRs in forks that reference the issue) are dropped
+    so reviewer-reuse never proposes a login who cannot be requested on
+    the current PR.
+    """
+    if not isinstance(node, dict):
+        return None
+    source = node.get("source") or {}
+    if not isinstance(source, dict):
+        return None
+    if str(source.get("__typename") or "") != "PullRequest":
+        return None
+    number = source.get("number")
+    if not isinstance(number, int):
+        return None
+    source_repo = source.get("repository") or {}
+    source_owner = (
+        ((source_repo.get("owner") or {}).get("login") or "").strip()
+    )
+    source_repo_name = str(source_repo.get("name") or "").strip()
+    if (
+        source_owner.lower() != owner.lower()
+        or source_repo_name.lower() != repo.lower()
+    ):
+        return None
+    author = source.get("author") or {}
+    author_login = str(author.get("login") or "").strip()
+    author_typename = str(author.get("__typename") or "").strip()
+    state = str(source.get("state") or "").strip().upper()
+    return {
+        "number": int(number),
+        "title": str(source.get("title") or ""),
+        "url": str(source.get("url") or ""),
+        "state": state,
+        "author_login": author_login,
+        "author_typename": author_typename,
+    }
+
+
+def _fetch_cross_referenced_prs_for_issue(
+    requester: Any,
+    owner: str,
+    repo: str,
+    issue_number: int,
+) -> list[dict[str, Any]]:
+    """Return same-repo PRs that cross-reference ``issue_number``.
+
+    Walks the issue timeline via the
+    :data:`_ISSUE_CROSS_REFERENCED_PRS_QUERY` GraphQL query and collects
+    every ``CrossReferencedEvent`` source that resolves to a PullRequest
+    in the same ``owner/repo``. Pagination follows the standard
+    ``pageInfo.endCursor`` pattern used elsewhere in this module.
+    Records are deduplicated by PR number so a PR referenced multiple
+    times only appears once.
+    """
+    seen: dict[int, dict[str, Any]] = {}
+    cursor: str | None = None
+    while True:
+        _headers, data = requester.graphql_query(
+            _ISSUE_CROSS_REFERENCED_PRS_QUERY,
+            {
+                "owner": owner,
+                "name": repo,
+                "number": int(issue_number),
+                "after": cursor,
+            },
+        )
+        issue_data = (
+            ((data.get("data") or {}).get("repository") or {}).get("issue")
+            or {}
+        )
+        timeline_items = issue_data.get("timelineItems") or {}
+        for node in timeline_items.get("nodes") or []:
+            entry = _normalize_cross_referenced_pr(node, owner=owner, repo=repo)
+            if entry is None:
+                continue
+            seen.setdefault(entry["number"], entry)
+        page_info = timeline_items.get("pageInfo") or {}
+        if not page_info.get("hasNextPage"):
+            break
+        cursor = page_info.get("endCursor")
+        if not cursor:
+            break
+    return sorted(seen.values(), key=lambda item: int(item["number"]))
+
+
+def _author_is_bot(entry: dict[str, Any]) -> bool:
+    """Return True when *entry*'s author looks like an automation account."""
+    if str(entry.get("author_typename") or "").strip() == "Bot":
+        return True
+    login = str(entry.get("author_login") or "").strip().lower()
+    return bool(login) and login.endswith("[bot]")
+
+
+def _collect_sibling_reviewer_signals(
+    pr: Any,
+    *,
+    exclude_logins: set[str],
+) -> tuple[list[str], list[str]]:
+    """Return ``(requested_human_logins, prior_human_logins)`` for *pr*.
+
+    Reviewer signals are gathered via PyGithub REST endpoints rather
+    than GraphQL because the existing apply-step contract already uses
+    PyGithub objects exclusively, ``get_review_requests`` /
+    ``get_reviews`` are cheap and paginated, and they expose the
+    ``user`` and ``state`` fields directly. Bots and any logins listed
+    in *exclude_logins* (the current PR's author plus its own author)
+    are filtered out.
+
+    Per-PR failures are logged and swallowed so one inaccessible PR
+    does not abort the sibling-PR discovery for the whole batch.
+    """
+    requested: list[str] = []
+    prior: list[str] = []
+    normalized_excluded = {login.strip().lower() for login in exclude_logins if login}
+
+    def _accept(login: str) -> str | None:
+        normalized = login.strip().lstrip("@")
+        if not normalized:
+            return None
+        if normalized.lower() in normalized_excluded:
+            return None
+        return normalized
+
+    try:
+        users, _teams = pr.get_review_requests()
+    except Exception:
+        logger.exception(
+            "Failed to list requested reviewers for sibling PR #%s",
+            getattr(pr, "number", "unknown"),
+        )
+        users = []
+    seen_requested: set[str] = set()
+    for user in users or []:
+        if is_automation_user(user):
+            continue
+        login = _accept(get_login(user))
+        if login is None:
+            continue
+        key = login.lower()
+        if key in seen_requested:
+            continue
+        seen_requested.add(key)
+        requested.append(login)
+
+    try:
+        reviews = list(pr.get_reviews())
+    except Exception:
+        logger.exception(
+            "Failed to list reviews for sibling PR #%s",
+            getattr(pr, "number", "unknown"),
+        )
+        reviews = []
+    seen_prior: set[str] = set()
+    for review in reviews:
+        state = str(getattr(review, "state", "") or "").strip().upper()
+        # PENDING reviews are drafts that have not been submitted, so
+        # ignore them. Every other state represents a real human review
+        # signal we are willing to reuse.
+        if state == "PENDING":
+            continue
+        if is_automation_user(getattr(review, "user", None)):
+            continue
+        login = _accept(get_login(getattr(review, "user", None)))
+        if login is None:
+            continue
+        key = login.lower()
+        if key in seen_prior:
+            continue
+        seen_prior.add(key)
+        prior.append(login)
+
+    return requested, prior
+
+
+def find_related_prs_for_issue(
+    github: Repository,
+    owner: str,
+    repo: str,
+    issue_number: int,
+    *,
+    exclude_pr_number: int | None = None,
+    exclude_pr_author_login: str = "",
+) -> list[dict[str, Any]]:
+    """Return sibling PRs in the same repo that reference ``issue_number``.
+
+    Uses the issue-timeline ``CrossReferencedEvent`` GraphQL query to
+    enumerate every PR that references the issue (closing keyword,
+    manual link, or plain ``#N`` mention), then enriches each record
+    with reviewer signals (currently requested reviewers and prior
+    human reviewers) drawn from PyGithub REST endpoints on each sibling
+    PR.
+
+    The current PR (``exclude_pr_number``) and its author
+    (``exclude_pr_author_login``) are excluded from the results so the
+    reviewer-reuse selector cannot recommend self-review.
+
+    Fail-open: any GraphQL or PyGithub error is logged and the
+    function returns an empty list so the workflow degrades to the
+    existing reviewer-resolution path.
+    """
+    requester = _graphql_requester(github)
+    if requester is None or not isinstance(issue_number, int) or issue_number <= 0:
+        return []
+    try:
+        sources = _fetch_cross_referenced_prs_for_issue(
+            requester, owner, repo, int(issue_number)
+        )
+    except Exception:
+        logger.exception(
+            "Failed to fetch cross-referenced PRs for issue #%s in %s/%s",
+            issue_number,
+            owner,
+            repo,
+        )
+        return []
+    results: list[dict[str, Any]] = []
+    exclude_author_key = (exclude_pr_author_login or "").strip().lower()
+    for entry in sources:
+        pr_number = int(entry["number"])
+        if exclude_pr_number is not None and pr_number == int(exclude_pr_number):
+            continue
+        if _author_is_bot(entry):
+            continue
+        author_login = entry.get("author_login") or ""
+        sibling_pr: Any = None
+        try:
+            sibling_pr = github.get_pull(pr_number)
+        except Exception:
+            logger.exception(
+                "Failed to fetch sibling PR #%s in %s/%s for reviewer signals",
+                pr_number,
+                owner,
+                repo,
+            )
+            requested, prior = [], []
+        if sibling_pr is not None:
+            exclude_logins = {author_login.lower()}
+            if exclude_author_key:
+                exclude_logins.add(exclude_author_key)
+            requested, prior = _collect_sibling_reviewer_signals(
+                sibling_pr,
+                exclude_logins=exclude_logins,
+            )
+        results.append(
+            {
+                "number": pr_number,
+                "title": str(entry.get("title") or ""),
+                "url": str(entry.get("url") or ""),
+                "state": str(entry.get("state") or "").upper(),
+                "author_login": author_login,
+                "requested_reviewers": requested,
+                "prior_reviewers": prior,
+            }
+        )
+    return results
+
+
+def build_related_pr_reviewer_candidates(
+    related_prs: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Return a deterministic ordered candidate list keyed by source tier.
+
+    Walks *related_prs* in (PR number) order and emits candidates as
+    ``{"login": str, "source": str}`` records. ``source`` is
+    ``"requested-open"`` for human reviewers currently requested on an
+    open sibling PR (the strongest signal), and ``"prior-review"`` for
+    humans who already submitted any non-PENDING review on a sibling.
+    Each login appears at most once per source tier; the apply-step
+    selector reads these tiers in order and picks the first unambiguous
+    eligible login.
+    """
+    requested_seen: set[str] = set()
+    requested_candidates: list[dict[str, str]] = []
+    prior_seen: set[str] = set()
+    prior_candidates: list[dict[str, str]] = []
+    for entry in related_prs or []:
+        if not isinstance(entry, dict):
+            continue
+        state = str(entry.get("state") or "").strip().upper()
+        if state == "OPEN":
+            for login in entry.get("requested_reviewers") or []:
+                if not isinstance(login, str):
+                    continue
+                key = login.strip().lower()
+                if not key or key in requested_seen:
+                    continue
+                requested_seen.add(key)
+                requested_candidates.append(
+                    {"login": login.strip(), "source": "requested-open"}
+                )
+        for login in entry.get("prior_reviewers") or []:
+            if not isinstance(login, str):
+                continue
+            key = login.strip().lower()
+            if not key or key in prior_seen:
+                continue
+            prior_seen.add(key)
+            prior_candidates.append(
+                {"login": login.strip(), "source": "prior-review"}
+            )
+    return requested_candidates + prior_candidates
 
 
 def is_spec_only_pr(changed_files: list[str]) -> bool:

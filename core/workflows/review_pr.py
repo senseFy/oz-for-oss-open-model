@@ -12,7 +12,9 @@ from github.GithubException import GithubException
 from github.Repository import Repository
 from oz.helpers import (
     build_comment_body,
+    build_related_pr_reviewer_candidates,
     comment_metadata,
+    find_related_prs_for_issue,
     get_field,
     get_label_name,
     is_automation_user,
@@ -586,6 +588,118 @@ def _resolve_reviewer_from_ownership_area(
     return [choice]
 
 
+def _ownership_area_login_set(
+    ownership_areas: list[OwnershipArea],
+) -> set[str]:
+    """Return the lowercase union of owner logins across *ownership_areas*.
+
+    Used by :func:`_resolve_same_issue_reviewer` to keep sibling-PR
+    reviewer reuse aligned with the canonical maintainer set when the
+    ownership-areas integration is active.
+    """
+    logins: set[str] = set()
+    for area in ownership_areas or []:
+        for owner in getattr(area, "owners", None) or []:
+            if not isinstance(owner, str):
+                continue
+            login = owner.strip().lstrip("@").lower()
+            if login:
+                logins.add(login)
+    return logins
+
+
+def _resolve_same_issue_reviewer(
+    candidates: Any,
+    *,
+    ownership_areas: list[OwnershipArea],
+    stakeholder_entries: list[dict[str, Any]],
+    pr_author_login: str,
+) -> list[str]:
+    """Pick one same-issue sibling reviewer when there is a clear winner.
+
+    *candidates* is the precomputed
+    ``related_pr_reviewer_candidates`` list from the dispatched
+    :class:`ReviewContext`. Each entry is ``{"login": str, "source":
+    str}`` where ``source`` is either ``"requested-open"`` (highest
+    priority) or ``"prior-review"`` (fallback signal).
+
+    Tier selection:
+
+    1. Restrict to logins that are eligible under the current
+       maintainer set. When ownership areas were loaded the set is the
+       union of owners across all areas. Otherwise we filter through
+       ``.github/STAKEHOLDERS`` owners. This preserves the existing
+       collaborator/owner guard used by the other reviewer paths.
+    2. Within the ``requested-open`` tier, if exactly one eligible
+       login remains, pick it. If multiple distinct logins remain, log
+       the ambiguity and skip to the next tier rather than guess. This
+       matches issue #456's "do not guess silently" requirement.
+    3. Repeat (2) for the ``prior-review`` tier.
+    4. Return ``[]`` when no unambiguous winner exists in either tier,
+       so the caller falls through to the ownership-area / STAKEHOLDERS
+       path.
+    """
+    if not isinstance(candidates, list) or not candidates:
+        return []
+    if ownership_areas:
+        allowed_logins: set[str] | None = _ownership_area_login_set(ownership_areas)
+    elif stakeholder_entries:
+        allowed_logins = _stakeholder_logins(stakeholder_entries)
+    else:
+        # Without any maintainer set to validate against, sibling-PR
+        # reuse could request a reviewer outside the trusted roster,
+        # which is exactly the behavior we are trying to avoid. Skip.
+        return []
+    if not allowed_logins:
+        return []
+    author_key = (pr_author_login or "").strip().lower()
+    by_tier: dict[str, list[str]] = {
+        "requested-open": [],
+        "prior-review": [],
+    }
+    seen_by_tier: dict[str, set[str]] = {
+        "requested-open": set(),
+        "prior-review": set(),
+    }
+    for entry in candidates:
+        if not isinstance(entry, dict):
+            continue
+        raw_login = entry.get("login")
+        source = str(entry.get("source") or "").strip()
+        if source not in by_tier:
+            continue
+        login = _normalize_reviewer_login(
+            raw_login,
+            pr_author_login=pr_author_login,
+            allowed_logins=allowed_logins,
+        )
+        if not login:
+            continue
+        key = login.lower()
+        if key == author_key or key in seen_by_tier[source]:
+            continue
+        seen_by_tier[source].add(key)
+        by_tier[source].append(login)
+    for tier in ("requested-open", "prior-review"):
+        eligible = by_tier[tier]
+        if len(eligible) == 1:
+            choice = eligible[0]
+            logger.info(
+                "review-pr: reusing same-issue reviewer %s from tier %s",
+                choice,
+                tier,
+            )
+            return [choice]
+        if len(eligible) > 1:
+            logger.info(
+                "review-pr: same-issue reviewer tier %s is ambiguous "
+                "(eligible: %s); falling through to next tier",
+                tier,
+                eligible,
+            )
+    return []
+
+
 def _resolve_recommended_reviewers(
     review: Mapping[str, Any],
     *,
@@ -593,21 +707,42 @@ def _resolve_recommended_reviewers(
     repo_handle: Any,
     pr_author_login: str,
     changed_paths: list[str],
+    related_pr_reviewer_candidates: list[dict[str, str]] | None = None,
 ) -> list[str]:
-    """Resolve a single reviewer from ownership areas, falling back to STAKEHOLDERS.
+    """Resolve a single reviewer for a non-member APPROVE.
 
     Validation flow:
-    1. Try to match the agent-supplied ``recommended_area`` against the
-       parsed ownership-areas list. On match, pick one eligible owner
+    1. Reuse a same-issue sibling reviewer when there is exactly one
+       eligible candidate in either the ``requested-open`` tier or, as
+       a weaker signal, the ``prior-review`` tier. This lets one
+       reviewer handle every external PR for the same issue instead of
+       fanning out per-PR. Ambiguous tiers fall through rather than
+       picking a random eligible login.
+    2. Match the agent-supplied ``recommended_area`` against the parsed
+       ownership-areas list. On match, pick one eligible owner
        uniformly at random.
-    2. If ownership-areas resolution yields no reviewer (empty list,
+    3. If ownership-areas resolution yields no reviewer (empty list,
        agent gave up, unknown area, or area has no eligible owners),
-       lazily fetch ``.github/STAKEHOLDERS`` from the consuming repo and
-       use :func:`_deterministic_reviewer_from_stakeholders` as the
-       deterministic last-resort fallback.
-    3. If STAKEHOLDERS also yields nothing, return ``[]`` so the caller
+       lazily fetch ``.github/STAKEHOLDERS`` from the consuming repo
+       and use :func:`_deterministic_reviewer_from_stakeholders` as
+       the deterministic last-resort fallback.
+    4. If STAKEHOLDERS also yields nothing, return ``[]`` so the caller
        completes the review without requesting a human reviewer.
     """
+    # Lazily load STAKEHOLDERS so the eligibility filter for sibling-PR
+    # reuse has the same maintainer guard as the existing fallback,
+    # while keeping the call cheap when ownership areas are loaded.
+    stakeholder_entries = (
+        load_stakeholders_from_repo(repo_handle) if repo_handle is not None else []
+    )
+    sibling_reviewer = _resolve_same_issue_reviewer(
+        related_pr_reviewer_candidates,
+        ownership_areas=ownership_areas,
+        stakeholder_entries=stakeholder_entries,
+        pr_author_login=pr_author_login,
+    )
+    if sibling_reviewer:
+        return sibling_reviewer
     reviewer = _resolve_reviewer_from_ownership_area(
         review,
         ownership_areas=ownership_areas,
@@ -615,8 +750,6 @@ def _resolve_recommended_reviewers(
     )
     if reviewer:
         return reviewer
-    # Lazily load STAKEHOLDERS only if no reviewer found in ownership areas.
-    stakeholder_entries = load_stakeholders_from_repo(repo_handle) if repo_handle is not None else []
     fallback = _deterministic_reviewer_from_stakeholders(
         stakeholder_entries,
         changed_paths=changed_paths,
@@ -915,6 +1048,19 @@ class ReviewContext(TypedDict):
     # the agent's ``recommended_area`` back to an owner deterministically.
     ownership_areas: list[dict[str, Any]]
     ownership_areas_loaded: bool
+    # Same-issue sibling-PR context captured at dispatch time. Populated
+    # only for non-member, code (non-spec-only) PRs that resolve to a
+    # single linked issue; empty everywhere else. ``linked_issue_number``
+    # is the resolved primary same-repo issue (0 when none). ``related_prs``
+    # carries one record per sibling PR with reviewer signals.
+    # ``related_pr_reviewer_candidates`` is a precomputed ordered list of
+    # ``{login, source}`` records the apply step consumes to reuse a
+    # same-issue reviewer before falling through to the ownership-areas /
+    # STAKEHOLDERS path. ``source`` is ``"requested-open"`` or
+    # ``"prior-review"``.
+    linked_issue_number: int
+    related_prs: list[dict[str, Any]]
+    related_pr_reviewer_candidates: list[dict[str, str]]
     progress_comment_id: int
 
 
@@ -1027,6 +1173,29 @@ def gather_review_context(
     stakeholders_entries: list[dict[str, Any]] = []
     ownership_areas_serialized: list[dict[str, Any]] = []
     ownership_areas_loaded = False
+    related_prs: list[dict[str, Any]] = []
+    related_pr_reviewer_candidates: list[dict[str, str]] = []
+    linked_issue_number = int(issue_number or 0)
+    if is_non_member and linked_issue_number > 0:
+        # Enumerate sibling PRs that reference the same issue (closing
+        # keyword, manual link, or plain ``#N`` mention) so the apply
+        # step can prefer reusing a reviewer who is already engaged with
+        # this issue before falling through to ownership-areas /
+        # STAKEHOLDERS resolution. Limited to non-member, non-spec
+        # PRs per issue #456 to avoid expanding reviewer-assignment
+        # behavior for regular member PRs. Fail-open inside the helper
+        # keeps the dispatch path resilient to GraphQL/REST failures.
+        related_prs = find_related_prs_for_issue(
+            github,
+            owner,
+            repo,
+            linked_issue_number,
+            exclude_pr_number=int(pr_number),
+            exclude_pr_author_login=pr_author_login,
+        )
+        related_pr_reviewer_candidates = build_related_pr_reviewer_candidates(
+            related_prs
+        )
     if is_non_member:
         # Prefer the canonical ``warpdotdev/warp-ownership`` mapping when
         # an ownership-repo client is wired in. The agent picks one area
@@ -1121,8 +1290,74 @@ def gather_review_context(
         stakeholder_entries=stakeholders_entries,
         ownership_areas=ownership_areas_serialized,
         ownership_areas_loaded=bool(ownership_areas_loaded),
+        linked_issue_number=linked_issue_number,
+        related_prs=related_prs,
+        related_pr_reviewer_candidates=related_pr_reviewer_candidates,
         progress_comment_id=int(progress_comment_id or 0),
     )
+
+
+def _format_related_prs_block(
+    related_prs: Any,
+    *,
+    pr_number: int,
+) -> str:
+    """Render the same-issue sibling PRs as a compact prompt section.
+
+    Returns an empty string when no sibling PRs are available so callers
+    can skip the block entirely. The control plane uses this block to
+    surface context to the reviewing agent; reviewer reuse is enforced
+    deterministically at apply time via
+    ``related_pr_reviewer_candidates`` and does not depend on the agent
+    consuming this text.
+    """
+    if not isinstance(related_prs, list) or not related_prs:
+        return ""
+    lines: list[str] = []
+    for entry in related_prs:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            number = int(entry.get("number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if number <= 0 or number == int(pr_number):
+            continue
+        title = str(entry.get("title") or "").strip()
+        url = str(entry.get("url") or "").strip()
+        state = str(entry.get("state") or "").strip().upper() or "UNKNOWN"
+        author = str(entry.get("author_login") or "").strip()
+        header = f"- #{number} [{state}]"
+        if title:
+            header += f" — {title}"
+        if url:
+            header += f" ({url})"
+        if author:
+            header += f" by @{author}"
+        lines.append(header)
+        requested = [
+            str(login).strip()
+            for login in (entry.get("requested_reviewers") or [])
+            if isinstance(login, str) and login.strip()
+        ]
+        prior = [
+            str(login).strip()
+            for login in (entry.get("prior_reviewers") or [])
+            if isinstance(login, str) and login.strip()
+        ]
+        if requested:
+            lines.append(
+                "    requested reviewers: "
+                + ", ".join(f"@{login}" for login in requested)
+            )
+        if prior:
+            lines.append(
+                "    prior reviewers: "
+                + ", ".join(f"@{login}" for login in prior)
+            )
+    if not lines:
+        return ""
+    return "\n".join(lines)
 
 
 def _format_ownership_areas_json_block(
@@ -1228,6 +1463,23 @@ def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
     non_member_section = str(context.get("non_member_review_section") or "").rstrip()
     if non_member_section:
         prompt = prompt + "\n\n" + non_member_section
+    related_prs_block = _format_related_prs_block(
+        context.get("related_prs"),
+        pr_number=int(context.get("pr_number") or 0),
+    )
+    if related_prs_block:
+        linked_issue_number = int(context.get("linked_issue_number") or 0)
+        header_suffix = (
+            f" (linked issue #{linked_issue_number})"
+            if linked_issue_number > 0
+            else ""
+        )
+        prompt = (
+            prompt
+            + f"\n\nRelated same-issue PRs{header_suffix}:\n"
+            + "These are other open or recently active pull requests that reference the same issue. They are provided as context only — do not call GitHub to inspect them yourself. The control plane has already used this information to keep reviewer assignment consistent across sibling PRs.\n"
+            + related_prs_block
+        )
     if ownership_areas_loaded:
         prompt = (
             prompt
@@ -1320,12 +1572,21 @@ def apply_review_result(
             for entry in (context.get("ownership_areas") or [])
             if isinstance(entry, dict) and entry.get("name")
         ]
+        raw_related_candidates = context.get("related_pr_reviewer_candidates") or []
+        related_pr_reviewer_candidates = [
+            entry
+            for entry in raw_related_candidates
+            if isinstance(entry, dict)
+            and isinstance(entry.get("login"), str)
+            and isinstance(entry.get("source"), str)
+        ]
         recommended_reviewers = _resolve_recommended_reviewers(
             result,
             ownership_areas=ownership_areas,
             repo_handle=github,
             pr_author_login=pr_author_login,
             changed_paths=list(diff_line_map),
+            related_pr_reviewer_candidates=related_pr_reviewer_candidates,
         )
     else:
         recommended_reviewers = []
