@@ -4,11 +4,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 from . import conftest  # noqa: F401
-
-from oz.oz_client import skill_file_path, skill_spec
+from oz.attachments import text_attachment
+from oz.oz_client import dispatch_run, skill_file_path, skill_spec
 
 
 def _write_skill(root: Path, name: str) -> Path:
@@ -81,6 +83,55 @@ class SkillResolutionTest(unittest.TestCase):
                     skill_spec("review-pr"),
                     "forks/oz-for-oss:.agents/skills/review-pr/SKILL.md",
                 )
+
+
+class _FakeAgent:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def run(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        return SimpleNamespace(run_id="oz-run-1")
+
+
+class _FakeClient:
+    def __init__(self) -> None:
+        self.agent = _FakeAgent()
+
+
+class DispatchRunAttachmentTest(unittest.TestCase):
+    def test_dispatch_run_includes_attachments_when_provided(self) -> None:
+        client = _FakeClient()
+        attachment = text_attachment(
+            file_name="context.txt",
+            text="hello from an attachment",
+        )
+
+        response = dispatch_run(
+            prompt="prompt body",
+            skill_name=None,
+            title="Attachment test",
+            config={"environment_id": "env", "name": "attachment-test"},
+            attachments=[attachment],
+            client=client,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(response.run_id, "oz-run-1")
+        self.assertEqual(client.agent.calls[0]["attachments"], (attachment,))
+
+    def test_dispatch_run_omits_attachments_when_empty(self) -> None:
+        client = _FakeClient()
+
+        dispatch_run(
+            prompt="prompt body",
+            skill_name=None,
+            title="Attachment test",
+            config={"environment_id": "env", "name": "attachment-test"},
+            attachments=[],
+            client=client,  # type: ignore[arg-type]
+        )
+
+        self.assertNotIn("attachments", client.agent.calls[0])
 
 
 if __name__ == "__main__":

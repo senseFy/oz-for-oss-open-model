@@ -19,7 +19,7 @@ If a repo-specific wrapper skill or explicit prompt provides exact output paths 
 
 These specs should largely be written by agents, not by hand, and should be checked into source control so they can be reviewed and kept current with the code.
 
-## When specs are required
+## Inputs
 
 Strongly prefer specs when the change is substantial, such as:
 
@@ -37,7 +37,7 @@ Specs are often unnecessary for:
 
 For pure UI changes, the product spec is often useful while the tech spec may be unnecessary.
 
-## Workflow
+## Process
 
 ### 1. Decide whether the feature needs specs
 
@@ -106,7 +106,7 @@ The checked-in specs should describe the feature that actually ships, not just t
 
 Before considering the work complete, make sure verification maps back to the specs. Prefer tests and artifacts that validate the product behavior directly, using the repository's existing validation workflows.
 
-## Best Practices
+## Outputs
 
 - Be pragmatic above all else.
 - Write specs to improve input quality for agents, not as ceremony.

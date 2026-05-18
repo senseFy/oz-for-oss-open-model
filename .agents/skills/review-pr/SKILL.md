@@ -1,23 +1,23 @@
 ---
 name: review-pr
-description: Review a pull request diff and write structured feedback to review.json for the workflow to publish. Use when reviewing a checked-out PR from local artifacts like pr_diff.txt and pr_description.txt and producing machine-readable review output instead of posting directly to GitHub.
+description: Review a pull request diff and write structured feedback to review.json for the workflow to publish. Use when reviewing a checked-out PR from local artifacts like pr_diff.txt and pr_description.md and producing machine-readable review output instead of posting directly to GitHub.
 ---
 
 # Review PR Skill
 
 Review the current pull request and write the output to `review.json`.
 
-## Context
+## Inputs
 
 - The working directory is the PR branch checkout.
 - The workflow usually provides an annotated diff in `pr_diff.txt`.
-- The workflow usually provides the PR description in `pr_description.txt`.
+- The workflow usually provides the PR description in `pr_description.md`.
 - If `spec_context.md` exists, it contains spec context for implementation-vs-spec validation.
 - When the prompt references `.agents/skills/review-pr/scripts/resolve_spec_context.py`, use that script to materialize `spec_context.md` on demand instead of expecting spec content to be embedded in the prompt.
 - Focus on files and lines changed by this PR.
 - Default behavior: do not post comments or reviews to GitHub directly.
 
-## Review Scope
+## Process
 
 - Prioritize correctness, security, error handling, and meaningful performance issues.
 - Always apply the repository's local `security-review-pr` skill as a supplemental security pass on code PRs. Fold any security findings into the same `review.json` produced by this review rather than emitting a separate output.
@@ -80,7 +80,7 @@ Rules:
 - When unsure of the surrounding context, widen `start_line`/`line` to include enough real lines from the diff rather than guessing at surrounding tokens.
 - For multi-line suggestions, set `start_line` and `start_side` to the first line, and `line` and `side` to the last line.
 
-## Output Format
+## Outputs
 
 Create `review.json` with this shape:
 
@@ -153,9 +153,9 @@ If the prompt says you are in a cloud-environment workflow and the expected loca
 - Convert the raw diff into `pr_diff.txt` using the annotated format above before reviewing.
 - If the prompt provides a `resolve_spec_context.py` command, run it only when spec validation is needed and write any returned spec content to `spec_context.md` before running review.
 - Still produce `review.json` and validate it with `jq`.
-- When the host already populated `pr_description.txt`, `pr_diff.txt`, or `spec_context.md` in the workflow checkout, use those files as-is and do not try to re-fetch GitHub context yourself.
+- When the host already populated `pr_description.txt`, `pr_diff.txt`, `spec_context.md`, or `ownership_areas.json` in the workflow checkout, use those files as-is and do not try to re-fetch GitHub context yourself.
 - When the prompt inlines the annotated PR diff instead of providing `pr_diff.txt`, write the inlined diff to `pr_diff.txt` exactly before validating `review.json`.
-- When the prompt inlines an Ownership Areas JSON block, write that block to `ownership_areas.json` exactly as shown before validating `review.json` so the validator can check `recommended_area` against the canonical list via `--ownership-areas ownership_areas.json`.
+- When the prompt inlines an Ownership Areas JSON block instead of providing `ownership_areas.json`, write that block to `ownership_areas.json` exactly as shown before validating `review.json` so the validator can check `recommended_area` against the canonical list via `--ownership-areas ownership_areas.json`.
 - The cloud run does not receive `GH_TOKEN`. If the host did not pre-materialize the needed context, follow only the prompt's explicit fallback instructions.
 - After `validate_review_json.py` passes, upload the result via `oz artifact upload review.json` (or `oz-preview artifact upload review.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. Do not write `review.json` to a `/mnt/...` mount path — the cloud agent has no such mount, and the host workflow only reads what you upload through the artifact CLI.
 - IMPORTANT: the upload subcommand is `artifact` (singular) on both `oz` and `oz-preview`. Do not use `artifacts` (plural) — that is not a valid subcommand and will fail.

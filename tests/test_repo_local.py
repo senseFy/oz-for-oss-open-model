@@ -15,11 +15,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from . import conftest  # noqa: F401
-
-from oz.repo_local import (
-    format_repo_local_prompt_section,
-    repo_local_skill_path_for_dispatch,
-)
+from oz.repo_local import repo_local_skill_path_for_dispatch
 
 
 class RepoLocalSkillPathForDispatchTest(unittest.TestCase):
@@ -80,32 +76,6 @@ class RepoLocalSkillPathForDispatchTest(unittest.TestCase):
         self.assertIsNone(repo_local_skill_path_for_dispatch(repo_handle, ""))
         self.assertIsNone(repo_local_skill_path_for_dispatch(repo_handle, "   "))
         repo_handle.get_contents.assert_not_called()
-
-
-class FormatRepoLocalPromptSectionTest(unittest.TestCase):
-    def test_renders_section_with_string_path(self) -> None:
-        # The cloud-mode helper returns a repo-relative string path.
-        # The prompt formatter must accept it without coercion.
-        section = format_repo_local_prompt_section(
-            "review-pr", ".agents/skills/review-pr-local/SKILL.md"
-        )
-        self.assertIn("Repository-specific guidance for `review-pr`", section)
-        self.assertIn(".agents/skills/review-pr-local/SKILL.md", section)
-
-    def test_renders_section_with_path_object(self) -> None:
-        # Workspace-backed callers can hand in an absolute
-        # :class:`pathcore.Path`; the formatter must also accept it so
-        # both path-resolution modes share the same helper.
-        from pathlib import Path
-
-        section = format_repo_local_prompt_section(
-            "triage-issue",
-            Path("/workspace/oz-for-oss/.agents/skills/triage-issue-local/SKILL.md"),
-        )
-        self.assertIn(
-            "/workspace/oz-for-oss/.agents/skills/triage-issue-local/SKILL.md",
-            section,
-        )
 
 
 if __name__ == "__main__":

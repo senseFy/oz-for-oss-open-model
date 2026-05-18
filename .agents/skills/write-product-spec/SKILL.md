@@ -19,7 +19,7 @@ If a repo-specific wrapper skill or explicit prompt provides an exact output pat
 
 - `specs/<topic>/PRODUCT.md`
 
-## Before writing
+## Inputs
 
 Gather the minimum context needed to write the spec:
 
@@ -47,7 +47,7 @@ For example, include a short note such as:
 
 No Figma mock is acceptable, but the absence should be explicit.
 
-## What to write
+## Outputs
 
 Use the following structure:
 
@@ -96,7 +96,7 @@ Describe how the behavior should be verified. Prefer checks that can map cleanly
 
 Call out unresolved product decisions rather than burying them in the narrative.
 
-## Writing guidance
+## Process
 
 - Prefer concrete behavior over aspirational wording.
 - Write for the implementer and reviewer, not for marketing.

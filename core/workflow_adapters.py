@@ -131,6 +131,7 @@ def dispatch_request_for_workflow(
         skill_name=dispatch.skill_name,
         prompt=dispatch.prompt,
         payload_subset=dict(dispatch.payload_subset),
+        attachments=tuple(dispatch.attachments),
         on_dispatched=on_dispatched,
     )
 

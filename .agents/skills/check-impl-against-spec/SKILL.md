@@ -15,10 +15,10 @@ Determine whether the implementation in the checked-out PR materially matches th
 
 - `spec_context.md` contains the spec context to compare against. It may include both product spec content (intended behavior, acceptance criteria) and tech spec content (implementation details, file changes).
 - `pr_diff.txt` contains the annotated diff for the PR.
-- `pr_description.txt` may contain additional scope or rationale.
+- `pr_description.md` may contain additional scope or rationale.
 - The working tree contains the PR branch contents.
 
-## How to evaluate spec alignment
+## Process
 
 1. Read `spec_context.md` and extract the concrete commitments it makes:
    - required behaviors (from the product spec)
@@ -33,7 +33,7 @@ Determine whether the implementation in the checked-out PR materially matches th
    - the change introduces significant unplanned scope
    - a required validation, migration, or compatibility step from the tech spec is absent
 
-## How to report mismatches
+## Outputs
 
 - Do not create a separate report file.
 - Fold spec-alignment findings into `review.json`.

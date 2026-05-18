@@ -6,6 +6,7 @@ from typing import Any, Mapping, TypedDict
 
 from github.Repository import Repository
 
+from oz.attachments import text_attachment
 from oz.helpers import WorkflowProgressComment
 from oz.verification import (
     discover_verification_skills,
@@ -13,11 +14,17 @@ from oz.verification import (
     format_verification_skills_for_prompt,
     render_verification_comment,
 )
+from .attachments import (
+    Attachment,
+    payload_without_fields,
+)
 
 WORKFLOW_NAME = "verify-pr-comment"
 FETCH_CONTEXT_SCRIPT = ".agents/skills/implement-specs/scripts/fetch_github_context.py"
 VERIFY_PR_SKILL = "verify-pr"
 VERIFICATION_REPORT_FILENAME = "verification_report.json"
+_VERIFICATION_SKILLS_ATTACHMENT = "verification_skills.md"
+_VERIFY_ATTACHMENT_PAYLOAD_FIELDS = {"verification_skills_text"}
 
 
 class VerifyContext(TypedDict):
@@ -135,7 +142,7 @@ def build_verification_prompt(
         - Triggered by: PR conversation comment id={trigger_comment_id} from @{requester or 'unknown'}
 
         Discovered Verification Skills:
-        {verification_skills_text}
+        Read `{_VERIFICATION_SKILLS_ATTACHMENT}` from the run attachments for the discovered verification skills.
 
         Fetching PR and Comment Content:
         - The PR body, conversation comments, review comments, and unified diff are NOT inlined in this prompt.
@@ -148,7 +155,7 @@ def build_verification_prompt(
         - Verify the code on branch `{head_branch}`. Fetch the branch and run your verification work against that branch rather than against the default branch.
         - Read and execute every discovered verification skill listed above. Do not silently skip a listed skill.
         - If a skill cannot be completed, record that clearly in the verification report.
-        - If verification creates screenshots, images, videos, or other reviewer-useful files, upload them as artifacts via `oz artifact upload <path>` (or `oz-preview artifact upload <path>` if the `oz` CLI is not available).
+        - If verification creates screenshots, images, videos, or other reviewer-useful files, upload them as Oz run artifacts via `oz artifact upload <path>` (or `oz-preview artifact upload <path>` if the `oz` CLI is not available).
         - Do not commit, push, edit the pull request, or post GitHub comments yourself.
 
         Report Output:
@@ -167,6 +174,19 @@ def build_verification_prompt(
           }}
         - Include one `skills` entry for every discovered verification skill listed above.
         - Validate `verification_report.json` with `jq`.
-        - Upload `verification_report.json` as an artifact via `oz artifact upload verification_report.json` (or `oz-preview artifact upload verification_report.json` if the `oz` CLI is not available).
+        - After validating, upload `verification_report.json` as an Oz run artifact via `oz artifact upload verification_report.json` (or `oz-preview artifact upload verification_report.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. The subcommand is `artifact` (singular) on both CLIs; do not use `artifacts`.
         """
     ).strip()
+
+
+def verify_context_attachments(context: Mapping[str, Any]) -> list[Attachment]:
+    verification_skills_text = context.get("verification_skills_text")
+    if not isinstance(verification_skills_text, str) or not verification_skills_text:
+        verification_skills_text = "- No verification skills discovered."
+    return [
+        text_attachment(_VERIFICATION_SKILLS_ATTACHMENT, verification_skills_text)
+    ]
+
+
+def verify_payload_subset(context: Mapping[str, Any]) -> dict[str, Any]:
+    return payload_without_fields(context, _VERIFY_ATTACHMENT_PAYLOAD_FIELDS)
