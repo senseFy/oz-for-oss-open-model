@@ -246,8 +246,15 @@ class ReviewWorkflow(BaseWorkflow):
     workflow = WORKFLOW_REVIEW_PR
     config_name = WORKFLOW_REVIEW_PR
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch | None:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+    ) -> WorkflowDispatch | None:
         from oz.helpers import format_review_start_line  # type: ignore[import-not-found]
+        from oz.ownership import OWNERSHIP_REPO  # type: ignore[import-not-found]
         from workflows import review_pr as review_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
@@ -316,6 +323,25 @@ class ReviewWorkflow(BaseWorkflow):
             explicit_issue_numbers=_resolve_linked_issue_numbers(payload),
         ):
             return None
+        # Resolve the ownership-areas repo handle through the same
+        # payload-keyed ``github_client``. When the org-wide install on
+        # ``warpdotdev`` covers both the consuming repo and
+        # ``warp-ownership``, one token reads both. The slug is hardcoded
+        # to ``warpdotdev/warp-ownership`` since this integration is
+        # scoped to that repo. Failures here are logged and treated as
+        # "ownership areas unavailable" so the review still dispatches
+        # against the legacy STAKEHOLDERS prompt for consumers outside
+        # the warpdotdev org or installs without access.
+        ownership_repo_handle: Any | None = None
+        try:
+            ownership_repo_handle = github_client.get_repo(OWNERSHIP_REPO)
+        except Exception:
+            logger.exception(
+                "review-pr: failed to resolve ownership-areas repo %s; "
+                "falling back to STAKEHOLDERS",
+                OWNERSHIP_REPO,
+            )
+            ownership_repo_handle = None
         context = review_workflow.gather_review_context(
             repo_handle,
             owner=owner,
@@ -324,6 +350,7 @@ class ReviewWorkflow(BaseWorkflow):
             trigger_source=trigger_source,
             requester=requester,
             workspace_path=workspace_path or Path("/tmp"),
+            ownership_repo_handle=ownership_repo_handle,
         )
         return WorkflowDispatch(
             workflow=self.workflow,
@@ -388,7 +415,13 @@ class RespondWorkflow(BaseWorkflow):
             return False
         return True
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch | None:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+    ) -> WorkflowDispatch | None:
         from workflows import respond_to_pr_comment as respond_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
@@ -480,7 +513,13 @@ class VerifyWorkflow(BaseWorkflow):
     workflow = WORKFLOW_VERIFY_PR_COMMENT
     config_name = WORKFLOW_VERIFY_PR_COMMENT
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+    ) -> WorkflowDispatch:
         from workflows import verify_pr_comment as verify_workflow  # type: ignore[import-not-found]
 
         owner, repo, full_name = _resolve_owner_repo(payload)
@@ -564,7 +603,13 @@ class TriageWorkflow(BaseWorkflow):
     workflow = WORKFLOW_TRIAGE_NEW_ISSUES
     config_name = WORKFLOW_TRIAGE_NEW_ISSUES
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+    ) -> WorkflowDispatch:
         from oz.helpers import format_triage_start_line, triggering_comment_prompt_text  # type: ignore[import-not-found]
         from workflows import triage_new_issues as triage_workflow  # type: ignore[import-not-found]
 
@@ -633,7 +678,13 @@ class CreateSpecWorkflow(BaseWorkflow):
     workflow = WORKFLOW_CREATE_SPEC_FROM_ISSUE
     config_name = WORKFLOW_CREATE_SPEC_FROM_ISSUE
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+    ) -> WorkflowDispatch:
         from oz.helpers import triggering_comment_prompt_text  # type: ignore[import-not-found]
         from workflows import create_spec_from_issue as create_spec_workflow  # type: ignore[import-not-found]
 
@@ -693,7 +744,13 @@ class CreateImplementationWorkflow(BaseWorkflow):
     workflow = WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
     config_name = WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+    ) -> WorkflowDispatch:
         from oz.helpers import triggering_comment_prompt_text  # type: ignore[import-not-found]
         from workflows import create_implementation_from_issue as implementation_workflow  # type: ignore[import-not-found]
 
@@ -752,7 +809,13 @@ class PlanApprovedWorkflow(CreateImplementationWorkflow):
     workflow = WORKFLOW_PLAN_APPROVED
     config_name = WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE
 
-    def build_dispatch(self, payload: Mapping[str, Any], *, github_client: Any, workspace_path: Path | None = None) -> WorkflowDispatch:
+    def build_dispatch(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        github_client: Any,
+        workspace_path: Path | None = None,
+    ) -> WorkflowDispatch:
         from oz.helpers import resolve_issue_number_for_pr  # type: ignore[import-not-found]
         from workflows import create_implementation_from_issue as implementation_workflow  # type: ignore[import-not-found]
 

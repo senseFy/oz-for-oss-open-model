@@ -125,11 +125,37 @@ Before finishing:
 
 - Fix invalid JSON if validation fails.
 - Confirm line numbers match the annotated diff.
-- Run the bundled validator against the exact annotated diff you reviewed:
+- Run the bundled validator against the exact annotated diff you reviewed. When the dispatch prompt inlines an Ownership Areas JSON block, also pass `--ownership-areas ownership_areas.json` so the validator can check `recommended_area` against the canonical list:
     ```
-    python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff pr_diff.txt
+    python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff pr_diff.txt --ownership-areas ownership_areas.json
     ```
-  If the script reports any invalid comments, fix `review.json` and rerun it. Do not finish until this validator passes. If the script path is not present at that exact location, locate `validate_review_json.py` under the loaded `review-pr` skill directory and run that copy with the same arguments.
+  When ownership areas are not in scope (member PRs, fallback-to-STAKEHOLDERS dispatches, local runs), omit `--ownership-areas`; the validator treats a missing file as "no ownership areas in scope". If the script reports any invalid comments, fix `review.json` and rerun it. Do not upload `review.json` until this validator passes. If the script path is not present at that exact location, locate `validate_review_json.py` under the loaded `review-pr` skill directory and run that copy with the same arguments.
 - Do not run `gh pr review`, `gh pr comment`, `gh api`, or any other command that posts to GitHub.
 
 Your only output is the final `review.json`.
+
+## Cloud workflow mode
+
+If the prompt says you are in a cloud-environment workflow and the expected local context files are missing:
+
+- Create `pr_description.txt` yourself from the PR body or GitHub metadata provided in the prompt.
+- Fetch and check out the exact PR head branch by name before generating the diff. Run:
+    ```
+    git fetch origin <head_branch>
+    git checkout <head_branch>
+    ```
+  Do NOT use `FETCH_HEAD` — always reference the named branch.
+- Generate the diff against the base branch using a three-dot merge-base diff:
+    ```
+    git diff origin/<base_branch>...HEAD
+    ```
+  This isolates only the changes introduced by the PR, not accumulated state from other branches.
+- Convert the raw diff into `pr_diff.txt` using the annotated format above before reviewing.
+- If the prompt provides a `resolve_spec_context.py` command, run it only when spec validation is needed and write any returned spec content to `spec_context.md` before running review.
+- Still produce `review.json` and validate it with `jq`.
+- When the host already populated `pr_description.txt`, `pr_diff.txt`, `spec_context.md`, or `ownership_areas.json` in the workflow checkout, use those files as-is and do not try to re-fetch GitHub context yourself.
+- When the prompt inlines the annotated PR diff instead of providing `pr_diff.txt`, write the inlined diff to `pr_diff.txt` exactly before validating `review.json`.
+- When the prompt inlines an Ownership Areas JSON block instead of providing `ownership_areas.json`, write that block to `ownership_areas.json` exactly as shown before validating `review.json` so the validator can check `recommended_area` against the canonical list via `--ownership-areas ownership_areas.json`.
+- The cloud run does not receive `GH_TOKEN`. If the host did not pre-materialize the needed context, follow only the prompt's explicit fallback instructions.
+- After `validate_review_json.py` passes, upload the result via `oz artifact upload review.json` (or `oz-preview artifact upload review.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. Do not write `review.json` to a `/mnt/...` mount path — the cloud agent has no such mount, and the host workflow only reads what you upload through the artifact CLI.
+- IMPORTANT: the upload subcommand is `artifact` (singular) on both `oz` and `oz-preview`. Do not use `artifacts` (plural) — that is not a valid subcommand and will fail.
