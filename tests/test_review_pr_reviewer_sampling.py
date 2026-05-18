@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from . import conftest  # noqa: F401
 
@@ -23,6 +23,7 @@ from workflows.review_pr import (  # type: ignore[import-not-found]
     RETRIGGER_HINT,
 )
 from oz.helpers import POWERED_BY_SUFFIX
+from oz.ownership import OwnershipArea
 
 
 STAKEHOLDERS = [
@@ -35,6 +36,19 @@ STAKEHOLDERS = [
 STAKEHOLDERS_WITH_TEAM = [
     {"pattern": "/", "owners": ["warpdotdev/oss-maintainers"]},
     {"pattern": "/docs/", "owners": ["docs-owner"]},
+]
+
+OWNERSHIP_AREAS = [
+    OwnershipArea(
+        name="Docs API",
+        owners=["api-owner", "backup-owner"],
+        matches="API reference docs and generated documentation",
+    ),
+    OwnershipArea(
+        name="General Docs",
+        owners=["docs-owner"],
+        matches="General documentation pages and guides",
+    ),
 ]
 
 
@@ -94,76 +108,128 @@ class DeterministicReviewerFallbackTest(unittest.TestCase):
         self.assertEqual(reviewers, [])
 
 
-class ResolveRecommendedReviewersTest(unittest.TestCase):
-    def test_accepts_single_agent_reviewer_from_stakeholders(self) -> None:
-        reviewers = _resolve_recommended_reviewers(
-            {"recommended_reviewers": ["@api-owner"]},
-            stakeholder_entries=STAKEHOLDERS,
-            changed_paths=["docs/api/reference.md"],
-            pr_author_login="contributor",
-        )
-        self.assertEqual(reviewers, ["api-owner"])
+class OwnershipAreasResolveReviewerTest(unittest.TestCase):
+    def test_returns_single_owner_without_random_choice(self) -> None:
+        with patch("workflows.review_pr._RANDOM.choice") as choose:
+            reviewers = _resolve_recommended_reviewers(
+                {"recommended_area": "General Docs"},
+                ownership_areas=OWNERSHIP_AREAS,
+                repo_handle=MagicMock(),
+                changed_paths=["docs/readme.md"],
+                pr_author_login="contributor",
+            )
+        self.assertEqual(reviewers, ["docs-owner"])
+        choose.assert_not_called()
 
-    def test_falls_back_when_agent_returns_multiple_reviewers(self) -> None:
-        reviewers = _resolve_recommended_reviewers(
-            {"recommended_reviewers": ["docs-owner", "api-owner"]},
-            stakeholder_entries=STAKEHOLDERS,
-            changed_paths=["docs/api/reference.md"],
-            pr_author_login="contributor",
-        )
+    def test_falls_back_when_area_has_only_pr_author(self) -> None:
+        repo_handle = MagicMock()
+        with patch(
+            "workflows.review_pr.load_stakeholders_from_repo",
+            return_value=STAKEHOLDERS,
+        ) as load:
+            reviewers = _resolve_recommended_reviewers(
+                {"recommended_area": "Runtime"},
+                ownership_areas=[
+                    OwnershipArea(
+                        name="Runtime",
+                        owners=["contributor"],
+                        matches="Runtime internals",
+                    )
+                ],
+                repo_handle=repo_handle,
+                changed_paths=["docs/api/reference.md"],
+                pr_author_login="contributor",
+            )
         self.assertEqual(reviewers, ["api-owner"])
+        load.assert_called_once_with(repo_handle)
 
-    def test_falls_back_when_agent_reviewer_is_not_a_stakeholder(self) -> None:
-        reviewers = _resolve_recommended_reviewers(
-            {"recommended_reviewers": ["outsider"]},
-            stakeholder_entries=STAKEHOLDERS,
-            changed_paths=["docs/api/reference.md"],
-            pr_author_login="contributor",
-        )
+    def test_empty_recommended_area_uses_lazy_stakeholders_fallback(self) -> None:
+        repo_handle = MagicMock()
+        with patch(
+            "workflows.review_pr.load_stakeholders_from_repo",
+            return_value=STAKEHOLDERS,
+        ) as load:
+            reviewers = _resolve_recommended_reviewers(
+                {"recommended_area": ""},
+                ownership_areas=OWNERSHIP_AREAS,
+                repo_handle=repo_handle,
+                changed_paths=["docs/api/reference.md"],
+                pr_author_login="contributor",
+            )
         self.assertEqual(reviewers, ["api-owner"])
+        load.assert_called_once_with(repo_handle)
 
-    def test_falls_back_when_agent_reviewer_is_pr_author(self) -> None:
-        reviewers = _resolve_recommended_reviewers(
-            {"recommended_reviewers": ["contributor"]},
-            stakeholder_entries=STAKEHOLDERS,
-            changed_paths=["docs/api/reference.md"],
-            pr_author_login="contributor",
-        )
-        self.assertEqual(reviewers, ["api-owner"])
+    def test_missing_invalid_or_unknown_area_uses_stakeholders_fallback(self) -> None:
+        for payload in (
+            {},
+            {"recommended_area": 1},
+            {"recommended_area": "Unknown Area"},
+        ):
+            with self.subTest(payload=payload):
+                repo_handle = MagicMock()
+                with patch(
+                    "workflows.review_pr.load_stakeholders_from_repo",
+                    return_value=STAKEHOLDERS,
+                ) as load:
+                    reviewers = _resolve_recommended_reviewers(
+                        payload,
+                        ownership_areas=OWNERSHIP_AREAS,
+                        repo_handle=repo_handle,
+                        changed_paths=["docs/api/reference.md"],
+                        pr_author_login="contributor",
+                    )
+                self.assertEqual(reviewers, ["api-owner"])
+                load.assert_called_once_with(repo_handle)
 
-    def test_falls_back_when_reviewers_payload_is_not_a_list(self) -> None:
-        reviewers = _resolve_recommended_reviewers(
-            {"recommended_reviewers": "api-owner"},
-            stakeholder_entries=STAKEHOLDERS,
-            changed_paths=["docs/api/reference.md"],
-            pr_author_login="contributor",
-        )
-        self.assertEqual(reviewers, ["api-owner"])
-
-    def test_returns_empty_when_agent_reviewer_is_not_in_empty_stakeholders(self) -> None:
-        reviewers = _resolve_recommended_reviewers(
-            {"recommended_reviewers": ["api-owner"]},
-            stakeholder_entries=[],
-            changed_paths=["docs/api/reference.md"],
-            pr_author_login="contributor",
-        )
+    def test_returns_empty_when_fallback_stakeholders_are_empty(self) -> None:
+        repo_handle = MagicMock()
+        with patch(
+            "workflows.review_pr.load_stakeholders_from_repo",
+            return_value=[],
+        ) as load:
+            reviewers = _resolve_recommended_reviewers(
+                {"recommended_area": "Unknown Area"},
+                ownership_areas=OWNERSHIP_AREAS,
+                repo_handle=repo_handle,
+                changed_paths=["docs/api/reference.md"],
+                pr_author_login="contributor",
+            )
         self.assertEqual(reviewers, [])
+        load.assert_called_once_with(repo_handle)
 
 
-class NonMemberPromptSectionTest(unittest.TestCase):
-    def test_prompt_requires_single_reviewer_and_gates_on_verdict(self) -> None:
+class OwnershipAreasPromptSectionTest(unittest.TestCase):
+    def test_prompt_requires_single_area_and_gates_on_verdict(self) -> None:
+        prompt = _format_non_member_review_section(
+            pr_author_login="contributor",
+            ownership_areas_block=(
+                "- Docs API\n"
+                "  owners: @api-owner, @backup-owner\n"
+                "  matches: API reference docs and generated documentation"
+            ),
+            ownership_areas_loaded=True,
+        )
+        self.assertIn("recommended_area", prompt)
+        self.assertIn("EXACTLY ONE area name", prompt)
+        self.assertIn("Do NOT invent area names", prompt)
+        self.assertIn("Do NOT return multiple names, a list, or owner handles", prompt)
+        self.assertIn("empty string `\"\"`", prompt)
+        self.assertIn("`verdict` is `\"APPROVE\"`", prompt)
+        self.assertIn("REQUEST_CHANGES", prompt)
+
+    def test_fallback_prompt_keeps_legacy_stakeholders_contract(self) -> None:
         prompt = _format_non_member_review_section(
             pr_author_login="contributor",
             stakeholders_block="- /docs/ → @docs-owner",
+            ownership_areas_loaded=False,
         )
-        self.assertIn("exactly one bare GitHub login", prompt)
+        self.assertIn("recommended_reviewers", prompt)
+        self.assertIn("exactly one bare GitHub login string", prompt)
         self.assertIn("Do not return more than one reviewer", prompt)
-        # The prompt should tie the reviewer request to ``verdict`` =
-        # APPROVE and explicitly mention the REJECT → REQUEST_CHANGES
-        # behavior so the agent understands when its reviewer choice
-        # will actually be honored.
-        self.assertIn("`verdict` is `\"APPROVE\"`", prompt)
-        self.assertIn("REQUEST_CHANGES", prompt)
+        self.assertIn(
+            "deterministically choose a fallback reviewer from `.github/STAKEHOLDERS`",
+            prompt,
+        )
 
 
 class FormatReviewCompletionMessageTest(unittest.TestCase):
@@ -216,7 +282,12 @@ class ParseVerdictTest(unittest.TestCase):
 class ApplyReviewResultVerdictTest(unittest.TestCase):
     """Verify ``apply_review_result`` honors the agent-supplied verdict."""
 
-    def _make_context(self, *, is_non_member: bool) -> dict:
+    def _make_context(
+        self,
+        *,
+        is_non_member: bool,
+        ownership_areas: list[dict[str, object]] | None = None,
+    ) -> dict:
         return {
             "owner": "acme",
             "repo": "widgets",
@@ -226,6 +297,8 @@ class ApplyReviewResultVerdictTest(unittest.TestCase):
             "pr_author_login": "contributor",
             "stakeholder_entries": STAKEHOLDERS,
             "stakeholder_logins": ["api-owner", "docs-owner", "fallback", "python-owner"],
+            "ownership_areas": ownership_areas or [],
+            "ownership_areas_loaded": bool(ownership_areas),
             "diff_line_map": {},
             "diff_content_map": {},
         }
@@ -273,13 +346,22 @@ class ApplyReviewResultVerdictTest(unittest.TestCase):
         progress = MagicMock()
         apply_review_result(
             github,
-            context=self._make_context(is_non_member=True),
+            context=self._make_context(
+                is_non_member=True,
+                ownership_areas=[
+                    {
+                        "name": "Docs API",
+                        "owners": ["api-owner"],
+                        "matches": "API reference docs and generated documentation",
+                    }
+                ],
+            ),
             run=MagicMock(),
             result={
                 "verdict": "REJECT",
                 "summary": "Needs work",
                 "comments": [],
-                "recommended_reviewers": ["api-owner"],
+                "recommended_area": "Docs API",
             },
             progress=progress,
         )
@@ -295,13 +377,22 @@ class ApplyReviewResultVerdictTest(unittest.TestCase):
         progress = MagicMock()
         apply_review_result(
             github,
-            context=self._make_context(is_non_member=True),
+            context=self._make_context(
+                is_non_member=True,
+                ownership_areas=[
+                    {
+                        "name": "Docs API",
+                        "owners": ["api-owner"],
+                        "matches": "API reference docs and generated documentation",
+                    }
+                ],
+            ),
             run=MagicMock(),
             result={
                 "verdict": "APPROVE",
                 "summary": "Looks good",
                 "comments": [],
-                "recommended_reviewers": ["api-owner"],
+                "recommended_area": "Docs API",
             },
             progress=progress,
         )
@@ -348,13 +439,22 @@ class ApplyReviewResultVerdictTest(unittest.TestCase):
         progress = MagicMock()
         apply_review_result(
             github,
-            context=self._make_context(is_non_member=True),
+            context=self._make_context(
+                is_non_member=True,
+                ownership_areas=[
+                    {
+                        "name": "Docs API",
+                        "owners": ["api-owner"],
+                        "matches": "API reference docs and generated documentation",
+                    }
+                ],
+            ),
             run=MagicMock(),
             result={
                 "verdict": "APPROVE",
                 "summary": "Looks good",
                 "comments": [],
-                "recommended_reviewers": ["api-owner"],
+                "recommended_area": "Docs API",
             },
             progress=progress,
         )
@@ -505,6 +605,8 @@ class ApplyReviewResultTeamReviewerTest(unittest.TestCase):
             "pr_author_login": "contributor",
             "stakeholder_entries": stakeholder_entries or STAKEHOLDERS_WITH_TEAM,
             "stakeholder_logins": [],
+            "ownership_areas": [],
+            "ownership_areas_loaded": False,
             "diff_line_map": {},
             "diff_content_map": {},
         }
@@ -518,18 +620,23 @@ class ApplyReviewResultTeamReviewerTest(unittest.TestCase):
         pr = MagicMock()
         github = self._make_github(pr)
         progress = MagicMock()
-        apply_review_result(
-            github,
-            context=self._make_context(),
-            run=MagicMock(),
-            result={
-                "verdict": "APPROVE",
-                "summary": "Looks good",
-                "comments": [],
-                "recommended_reviewers": ["warpdotdev/oss-maintainers"],
-            },
-            progress=progress,
-        )
+        stakeholders = self._make_context()["stakeholder_entries"]
+        with patch(
+            "workflows.review_pr.load_stakeholders_from_repo",
+            return_value=stakeholders,
+        ):
+            apply_review_result(
+                github,
+                context=self._make_context(),
+                run=MagicMock(),
+                result={
+                    "verdict": "APPROVE",
+                    "summary": "Looks good",
+                    "comments": [],
+                    "recommended_area": "",
+                },
+                progress=progress,
+            )
         pr.create_review_request.assert_called_once_with(
             team_reviewers=["oss-maintainers"]
         )
@@ -538,22 +645,23 @@ class ApplyReviewResultTeamReviewerTest(unittest.TestCase):
         pr = MagicMock()
         github = self._make_github(pr)
         progress = MagicMock()
-        apply_review_result(
-            github,
-            context=self._make_context(
-                stakeholder_entries=[
-                    {"pattern": "/docs/", "owners": ["docs-owner"]},
-                ],
-            ),
-            run=MagicMock(),
-            result={
-                "verdict": "APPROVE",
-                "summary": "Looks good",
-                "comments": [],
-                "recommended_reviewers": ["docs-owner"],
-            },
-            progress=progress,
-        )
+        stakeholders = [{"pattern": "/docs/", "owners": ["docs-owner"]}]
+        with patch(
+            "workflows.review_pr.load_stakeholders_from_repo",
+            return_value=stakeholders,
+        ):
+            apply_review_result(
+                github,
+                context=self._make_context(stakeholder_entries=stakeholders),
+                run=MagicMock(),
+                result={
+                    "verdict": "APPROVE",
+                    "summary": "Looks good",
+                    "comments": [],
+                    "recommended_area": "",
+                },
+                progress=progress,
+            )
         pr.create_review_request.assert_called_once_with(
             reviewers=["docs-owner"]
         )
@@ -566,18 +674,23 @@ class ApplyReviewResultTeamReviewerTest(unittest.TestCase):
         )
         github = self._make_github(pr)
         progress = MagicMock()
-        apply_review_result(
-            github,
-            context=self._make_context(),
-            run=MagicMock(),
-            result={
-                "verdict": "APPROVE",
-                "summary": "Looks good",
-                "comments": [],
-                "recommended_reviewers": ["warpdotdev/oss-maintainers"],
-            },
-            progress=progress,
-        )
+        stakeholders = self._make_context()["stakeholder_entries"]
+        with patch(
+            "workflows.review_pr.load_stakeholders_from_repo",
+            return_value=stakeholders,
+        ):
+            apply_review_result(
+                github,
+                context=self._make_context(),
+                run=MagicMock(),
+                result={
+                    "verdict": "APPROVE",
+                    "summary": "Looks good",
+                    "comments": [],
+                    "recommended_area": "",
+                },
+                progress=progress,
+            )
         progress.complete.assert_called_once()
         message = progress.complete.call_args[0][0]
         self.assertNotIn("oss-maintainers", message)
@@ -589,18 +702,23 @@ class ApplyReviewResultTeamReviewerTest(unittest.TestCase):
         pr = MagicMock()
         github = self._make_github(pr)
         progress = MagicMock()
-        apply_review_result(
-            github,
-            context=self._make_context(),
-            run=MagicMock(),
-            result={
-                "verdict": "APPROVE",
-                "summary": "Looks good",
-                "comments": [],
-                "recommended_reviewers": ["warpdotdev/oss-maintainers"],
-            },
-            progress=progress,
-        )
+        stakeholders = self._make_context()["stakeholder_entries"]
+        with patch(
+            "workflows.review_pr.load_stakeholders_from_repo",
+            return_value=stakeholders,
+        ):
+            apply_review_result(
+                github,
+                context=self._make_context(),
+                run=MagicMock(),
+                result={
+                    "verdict": "APPROVE",
+                    "summary": "Looks good",
+                    "comments": [],
+                    "recommended_area": "",
+                },
+                progress=progress,
+            )
         progress.complete.assert_called_once()
         message = progress.complete.call_args[0][0]
         self.assertIn("oss-maintainers", message)

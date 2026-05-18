@@ -264,7 +264,15 @@ class BuildReviewRequestTest(_BuilderTestBase):
         self.assertEqual(request.prompt, "REVIEW_PROMPT_BODY")
         self.assertEqual(request.payload_subset["pr_number"], 42)
         self.assertIn("pr_diff_text", request.payload_subset)
-        github_client.get_repo.assert_called_once_with("acme/widgets")
+        # ReviewWorkflow fetches both the consuming repo and the
+        # ownership repo (warpdotdev/warp-ownership) via the same
+        # payload-keyed client; both lookups should resolve through
+        # the single ``github_client.get_repo`` mock.
+        get_repo_targets = [
+            call.args[0] for call in github_client.get_repo.call_args_list
+        ]
+        self.assertIn("acme/widgets", get_repo_targets)
+        self.assertIn("warpdotdev/warp-ownership", get_repo_targets)
         # Progress is created after the Oz run id is available.
         self.assertEqual(len(self.progress_instances), 0)
         self.assert_deferred_progress(request)

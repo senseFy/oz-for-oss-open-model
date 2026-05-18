@@ -303,6 +303,100 @@ def _validate_verdict(payload: Any) -> list[str]:
     return []
 
 
+def _load_ownership_area_names(path: Path) -> list[str] | None:
+    """Return the parsed ownership-area names from *path*.
+
+    The control plane writes the dispatch-time ownership-areas list as
+    JSON for the validator to check the agent's
+    ``recommended_area`` against the same canonical list inlined in the
+    prompt. Returns ``None`` when the file is missing so the validator
+    still runs in non-cloud contexts (local invocations, member PRs,
+    fallback-to-STAKEHOLDERS dispatches) where no ownership-areas list
+    is in scope.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    try:
+        decoded = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"review validation failed: {path} is invalid JSON: {exc}"
+        )
+    if not isinstance(decoded, list):
+        raise SystemExit(
+            f"review validation failed: {path} must be a JSON array of "
+            'objects with a "name" field.'
+        )
+    names: list[str] = []
+    for index, entry in enumerate(decoded):
+        if not isinstance(entry, dict):
+            raise SystemExit(
+                f"review validation failed: {path}[{index}] must be a JSON object."
+            )
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise SystemExit(
+                f"review validation failed: {path}[{index}].name must be a non-empty string."
+            )
+        names.append(name)
+    return names
+
+
+def _validate_recommended_area(
+    payload: Any,
+    ownership_area_names: list[str] | None,
+) -> list[str]:
+    """Validate ``recommended_area`` against the verdict and parsed list.
+
+    Rules:
+
+    - When ``recommended_area`` is missing, it's treated as the
+      fallback signal (workflow defers to STAKEHOLDERS).
+    - When present, it must be a string. Non-string values are
+      always rejected; they indicate the agent misread the schema.
+    - When ``verdict`` is ``"REJECT"``, ``recommended_area`` must be
+      missing or empty (``""``). The workflow does not request a
+      human reviewer for non-member rejections, so a non-empty value
+      is meaningless and likely a hallucination.
+    - When ``verdict`` is ``"APPROVE"`` and an ownership-areas list
+      was provided, a non-empty ``recommended_area`` must exactly
+      match one of the listed area names. The empty string remains
+      the explicit fallback signal.
+    """
+    if not isinstance(payload, dict):
+        return []
+    if "recommended_area" not in payload:
+        return []
+    raw = payload.get("recommended_area")
+    if not isinstance(raw, str):
+        return [
+            "`recommended_area`, when present, must be a string copied verbatim from "
+            'the Ownership Areas list, or the empty string "" to fall back to STAKEHOLDERS.'
+        ]
+    stripped = raw.strip()
+    verdict = payload.get("verdict")
+    if verdict == "REJECT" and stripped:
+        return [
+            '`recommended_area` must be absent or "" when `verdict` is '
+            '"REJECT"; the workflow does not request a human reviewer for '
+            "non-member rejections."
+        ]
+    if (
+        verdict == "APPROVE"
+        and stripped
+        and ownership_area_names is not None
+        and stripped not in ownership_area_names
+    ):
+        return [
+            f"`recommended_area` {raw!r} is not in the parsed Ownership Areas list. "
+            "Copy a name verbatim from the prompt's Ownership Areas section, or set it "
+            'to "" to fall back to STAKEHOLDERS.'
+        ]
+    return []
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Validate review.json comments against annotated pr_diff.txt."
@@ -319,6 +413,16 @@ def main() -> int:
         type=Path,
         help="Path to the annotated PR diff consumed during review.",
     )
+    parser.add_argument(
+        "--ownership-areas",
+        default="ownership_areas.json",
+        type=Path,
+        help=(
+            "Path to the JSON list of ownership areas inlined in the dispatch "
+            "prompt. Used to validate `recommended_area` against the canonical "
+            "list. Missing file is treated as 'no ownership areas in scope'."
+        ),
+    )
     args = parser.parse_args()
 
     payload = _load_json(args.review_json)
@@ -328,9 +432,15 @@ def main() -> int:
         print(f"review validation failed: {args.diff} does not exist", file=sys.stderr)
         return 1
 
+    ownership_area_names = _load_ownership_area_names(args.ownership_areas)
+
     diff_line_map, diff_content_map = build_diff_maps_from_annotated_diff(diff_text)
     result = validate_review_payload(payload, diff_line_map, diff_content_map)
-    errors = _validate_verdict(payload) + result.errors
+    errors = (
+        _validate_verdict(payload)
+        + _validate_recommended_area(payload, ownership_area_names)
+        + result.errors
+    )
     if errors:
         print("review validation failed:", file=sys.stderr)
         for error in errors:

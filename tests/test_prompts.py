@@ -12,6 +12,10 @@ from workflows.respond_to_pr_comment import (
     build_pr_comment_prompt,
     gather_pr_comment_context,
 )
+from workflows.review_pr import (
+    _format_non_member_review_section,
+    build_review_prompt_for_dispatch,
+)
 from workflows.verify_pr_comment import build_verification_prompt
 
 
@@ -286,6 +290,60 @@ class PrCommentPromptBranchStrategyTest(unittest.TestCase):
         )
         self.assertIn("follow-up PR from `acme:oz-agent/respond-pr-12`", prompt)
         self.assertIn("use `oz-agent/respond-pr-12` exactly", prompt)
+
+
+class ReviewDispatchPromptNonMemberTest(unittest.TestCase):
+    def _base_context(self) -> dict[str, object]:
+        return {
+            "owner": "acme",
+            "repo": "widgets",
+            "pr_number": 12,
+            "pr_title": "feat: add widget",
+            "pr_body": "Implements the widget flow.",
+            "base_branch": "main",
+            "head_branch": "feature",
+            "trigger_source": "pull_request",
+            "focus_line": "Perform a general review of the pull request.",
+            "issue_line": "#100",
+            "skill_name": "review-pr",
+            "supplemental_skill_line": "Also apply security-review-pr.",
+            "repo_local_section": "",
+            "non_member_review_section": "",
+            "pr_description_text": "PR description body",
+            "pr_diff_text": "diff --git a/src/app.py b/src/app.py\n+++ b/src/app.py\n[NEW:1] print('hello')\n",
+            "spec_context_text": "",
+        }
+
+    def test_prompt_includes_ownership_area_selection_instructions(self) -> None:
+        context = self._base_context()
+        context["non_member_review_section"] = _format_non_member_review_section(
+            pr_author_login="contributor",
+            ownership_areas_block=(
+                "- MCP (Model Context Protocol)\n"
+                "  owners: @peicodes, @vkodithala\n"
+                "  matches: MCP server connections and resources"
+            ),
+            ownership_areas_loaded=True,
+        )
+        prompt = build_review_prompt_for_dispatch(context)
+        self.assertIn("Ownership Areas (from `warpdotdev/warp-ownership`)", prompt)
+        self.assertIn("recommended_area", prompt)
+        self.assertIn("Do NOT invent area names", prompt)
+        self.assertIn("empty string `\"\"`", prompt)
+        self.assertNotIn("exactly one bare GitHub login string", prompt)
+
+    def test_prompt_includes_stakeholders_fallback_instructions(self) -> None:
+        context = self._base_context()
+        context["non_member_review_section"] = _format_non_member_review_section(
+            pr_author_login="contributor",
+            stakeholders_block="- /docs/ → @docs-owner",
+            ownership_areas_loaded=False,
+        )
+        prompt = build_review_prompt_for_dispatch(context)
+        self.assertIn("Stakeholders (from `.github/STAKEHOLDERS`)", prompt)
+        self.assertIn("recommended_reviewers", prompt)
+        self.assertIn("exactly one bare GitHub login string", prompt)
+        self.assertNotIn("Ownership Areas (from `warpdotdev/warp-ownership`)", prompt)
 
 
 if __name__ == "__main__":
