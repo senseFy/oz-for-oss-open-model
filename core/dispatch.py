@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Protocol
 
+from oz.attachments import SdkAttachment
 from .routing import RouteDecision
 from .state import RunState, StateStore, save_run_state
 logger = logging.getLogger(__name__)
@@ -42,8 +43,9 @@ WORKFLOW_ROLES: Mapping[str, str] = {
 # ``<owner>/<repo>:<path>`` spec. Oz-specific workflow skills
 # (``implement-issue``, ``verify-pr``, ``triage-issue``, etc.) remain in
 # the workflow-code repository. Generic base skills (``review-pr``,
-# ``implement-specs``, and the spec-writing skills) come from the
-# configured common-skills repository.
+# ``check-impl-against-spec``, ``implement-specs``, and the
+# spec-writing skills) come from the configured common-skills
+# repository.
 # Forks can override the workflow-code default by setting
 # ``WORKFLOW_CODE_REPOSITORY=owner/repo`` in the Vercel environment so
 # their fork's bundled Oz-specific skills are used instead.
@@ -54,6 +56,7 @@ _DEFAULT_WORKFLOW_CODE_REPOSITORY = "warpdotdev/oz-for-oss"
 _DEFAULT_COMMON_SKILLS_REPOSITORY = "warpdotdev/common-skills"
 _COMMON_SKILL_NAMES = frozenset(
     {
+        "check-impl-against-spec",
         "implement-specs",
         "review-pr",
         "spec-driven-implementation",
@@ -141,6 +144,7 @@ class DispatchRequest:
     skill_name: str | None
     prompt: str
     payload_subset: dict[str, Any]
+    attachments: tuple[SdkAttachment, ...] = ()
     on_dispatched: Callable[[str], Mapping[str, Any] | None] | None = None
 
 
@@ -172,6 +176,7 @@ class AgentRunner(Protocol):
         config: Mapping[str, Any],
         skill: str | None,
         team: bool,
+        attachments: tuple[SdkAttachment, ...] | None = None,
     ) -> Any: ...
 
 
@@ -216,6 +221,7 @@ def dispatch_run(
         config=config,
         skill=skill,
         team=True,
+        attachments=request.attachments or None,
     )
     run_id = str(getattr(response, "run_id", "") or "")
     if not run_id:

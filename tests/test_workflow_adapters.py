@@ -97,6 +97,50 @@ class WorkflowProgressAdapterTest(unittest.TestCase):
         self.assertEqual(progress.kwargs["comment_id"], 4242)
         self.assertEqual(progress.kwargs["run_id"], "oz-run-123")
 
+    def test_dispatch_request_for_workflow_preserves_attachments(self) -> None:
+        from core.workflow_adapters import dispatch_request_for_workflow
+        from oz.agent_workflow import ProgressCommentSpec, WorkflowDispatch
+        from oz.attachments import text_attachment
+
+        attachment = text_attachment(
+            file_name="workflow-context.txt",
+            text="workflow context",
+        )
+
+        class _Workflow:
+            workflow = "review-pull-request"
+            config_name = "review-pull-request"
+
+            def build_dispatch(self, *args: Any, **kwargs: Any) -> WorkflowDispatch:
+                return WorkflowDispatch(
+                    workflow=self.workflow,
+                    repo="acme/widgets",
+                    installation_id=42,
+                    config_name=self.config_name,
+                    title="PR review #12",
+                    skill_name="review-pr",
+                    prompt="prompt body",
+                    payload_subset={"pr_number": 12},
+                    progress=ProgressCommentSpec(
+                        repo_handle=object(),
+                        owner="acme",
+                        repo="widgets",
+                        issue_number=12,
+                        workflow=self.workflow,
+                        start_line="Starting review.",
+                    ),
+                    attachments=(attachment,),
+                )
+
+        request = dispatch_request_for_workflow(
+            _Workflow(),  # type: ignore[arg-type]
+            {},
+            github_client=object(),
+        )
+
+        self.assertIsNotNone(request)
+        self.assertEqual(request.attachments, (attachment,))
+
 
 if __name__ == "__main__":
     unittest.main()

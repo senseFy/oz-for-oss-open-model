@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, Callable, Iterable, cast
 
 from oz_agent_sdk import OzAPI
 from oz_agent_sdk.types import AgentRunParams, AmbientAgentConfigParam
 from oz_agent_sdk.types.agent import RunItem
+from .attachments import SdkAttachment
 
 from .env import optional_env, require_env
 from .workflow_paths import workflow_code_root
@@ -98,6 +99,7 @@ _DEFAULT_WORKFLOW_CODE_REPOSITORY = "warpdotdev/oz-for-oss"
 _DEFAULT_COMMON_SKILLS_REPOSITORY = "warpdotdev/common-skills"
 _COMMON_SKILL_NAMES = frozenset(
     {
+        "check-impl-against-spec",
         "implement-specs",
         "review-pr",
         "spec-driven-implementation",
@@ -263,6 +265,7 @@ def dispatch_run(
     skill_name: str | None,
     title: str,
     config: AmbientAgentConfigParam,
+    attachments: Iterable[SdkAttachment] | None = None,
     client: OzAPI | None = None,
 ) -> Any:
     """Start an Oz agent run without waiting for it to finish.
@@ -288,6 +291,8 @@ def dispatch_run(
     }
     if skill_name:
         request["skill"] = skill_spec(skill_name)
+    if attachments:
+        request["attachments"] = tuple(attachments)
     sdk_client = client or build_oz_client()
     return sdk_client.agent.run(**request)
 
@@ -298,6 +303,7 @@ def run_agent(
     skill_name: str | None,
     title: str,
     config: AmbientAgentConfigParam,
+    attachments: Iterable[SdkAttachment] | None = None,
     on_poll: Callable[[RunItem], None] | None = None,
     poll_interval_seconds: int = 30,
     timeout_seconds: int = 60 * 60,
@@ -316,6 +322,7 @@ def run_agent(
         skill_name=skill_name,
         title=title,
         config=config,
+        attachments=attachments,
         client=client,
     )
     run_id = response.run_id

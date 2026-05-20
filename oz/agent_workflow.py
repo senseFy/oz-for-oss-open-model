@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Mapping, Protocol
 
+from oz.attachments import SdkAttachment
+
 
 @dataclass(frozen=True)
 class ProgressCommentSpec:
@@ -35,6 +37,7 @@ class WorkflowDispatch:
     prompt: str
     payload_subset: dict[str, Any]
     progress: ProgressCommentSpec
+    attachments: tuple[SdkAttachment, ...] = ()
 
 
 class AgentWorkflow(Protocol):

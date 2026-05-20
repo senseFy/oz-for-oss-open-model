@@ -38,7 +38,7 @@ The implementation role uses the Oz wrapper [`implement-issue`](../.agents/skill
 
 ### Review and verification
 
-The review role uses the shared `review-pr` skill, the Oz-specific [`review-spec`](../.agents/skills/review-spec/SKILL.md), and spec consistency checks via [`check-impl-against-spec`](../.agents/skills/check-impl-against-spec/SKILL.md). PR review results are uploaded as `review.json` and applied by `core/workflows/review_pr.py`.
+The review role uses the shared `review-pr` and `check-impl-against-spec` skills plus the Oz-specific [`review-spec`](../.agents/skills/review-spec/SKILL.md). PR review results are uploaded as `review.json` and applied by `core/workflows/review_pr.py`.
 
 The verification role uses [`verify-pr`](../.agents/skills/verify-pr/SKILL.md) and runs from the `/oz-verify` slash command on PR comments.
 

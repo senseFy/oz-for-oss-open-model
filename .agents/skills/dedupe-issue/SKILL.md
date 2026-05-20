@@ -14,7 +14,7 @@ Expect the prompt to include:
 - the incoming issue's number, title, and description
 - the repository owner/name, so you can search issues yourself via the GitHub API or `gh api --paginate`
 
-## Duplicate detection procedure
+## Process
 
 1. Enumerate comparison candidates yourself. Fetch all open issues in the repository with pagination, excluding pull requests and the incoming issue itself. Use the GitHub API directly or `gh api --paginate`; do not rely on a preselected candidate list from the triage prompt and do not cap the search to the newest issues.
 2. Fetch closed issues only when they were closed within the last 7 days or when repository-specific guidance names a known canonical duplicate. Older closed issues should generally not be treated as duplicates because they may already be resolved.
@@ -28,7 +28,7 @@ Expect the prompt to include:
 5. Rank candidates by overall similarity (title weight ≈ 40%, description weight ≈ 60%) and select the top matches.
 6. Only flag an issue as a duplicate when **2 or more** existing issues are identified as likely duplicates. A single weak match is not sufficient — the evidence must be corroborated across multiple existing issues to reduce false positives.
 
-## Output
+## Outputs
 
 Return a list of duplicate candidates in the triage result's `duplicate_of` field. Each entry must include:
 
@@ -54,16 +54,3 @@ Overridable categories:
 - repo-specific title and description normalizations (prefixes to strip, templates to ignore)
 
 If a companion file is not referenced in the prompt, rely on the core contract alone.
-
-## Cloud workflow mode
-
-Duplicate detection is invoked from the cloud-mode triage workflow,
-so the same artifact-upload contract applies whenever the prompt
-delegates here. When you populate the `duplicate_of` field in the
-triage result, do so within the same JSON document the triage
-workflow's prompt asks you to upload via `oz artifact upload
-triage_result.json` (or `oz-preview artifact upload
-triage_result.json` when the `oz` CLI is not available). Do not write
-the result to a `/mnt/...` mount path; the cloud agent has no such
-mount, and the host workflow only reads what you upload through the
-artifact CLI.

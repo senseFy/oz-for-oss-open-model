@@ -28,6 +28,7 @@ from core.routing import (
 )
 from core.signatures import expected_signature
 from core.state import InMemoryStateStore
+from oz.attachments import text_attachment
 
 
 _SECRET = "shared-test-secret"
@@ -99,6 +100,48 @@ class DispatchPathTest(unittest.TestCase):
         self.assertTrue(response.body["dispatched"])
         self.assertEqual(response.body["run_id"], "oz-run-1")
         self.assertEqual(len(runner_calls), 1)
+
+    def test_dispatches_request_attachments(self) -> None:
+        body, signature = _signed_envelope(self._payload())
+        attachment = text_attachment(
+            file_name="workflow-context.txt",
+            text="attached workflow context",
+        )
+
+        def builder(payload: Mapping[str, Any]) -> DispatchRequest:
+            return DispatchRequest(
+                workflow=WORKFLOW_REVIEW_PR,
+                repo="acme/widgets",
+                installation_id=1234,
+                config_name=WORKFLOW_REVIEW_PR,
+                title="PR review #42",
+                skill_name="review-pr",
+                prompt="prompt body",
+                payload_subset={"pr_number": 42},
+                attachments=(attachment,),
+            )
+
+        runner_calls: list[dict[str, Any]] = []
+
+        def runner(**kwargs: Any) -> Any:
+            runner_calls.append(kwargs)
+            return SimpleNamespace(run_id="oz-run-attachments")
+
+        response = process_webhook_request(
+            body=body,
+            signature_header=signature,
+            event_header="pull_request",
+            delivery_id="delivery-attachments",
+            secret=_SECRET,
+            builder_registry={WORKFLOW_REVIEW_PR: builder},
+            runner=runner,
+            config_factory=lambda name, role: {"environment_id": "env", "name": name},
+            store=InMemoryStateStore(),
+        )
+
+        self.assertEqual(response.status, 202)
+        self.assertEqual(response.body["run_id"], "oz-run-attachments")
+        self.assertEqual(runner_calls[0]["attachments"], (attachment,))
 
     def test_returns_202_dispatched_false_when_no_builder_registered(self) -> None:
         body, signature = _signed_envelope(self._payload())

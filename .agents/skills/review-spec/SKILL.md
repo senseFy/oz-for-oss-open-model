@@ -7,15 +7,15 @@ description: Review a spec/plan pull request diff and write structured feedback 
 
 Review a spec or plan pull request and write the output to `review.json`.
 
-## Context
+## Inputs
 
 - The working directory is the PR branch checkout.
 - The workflow usually provides an annotated diff in `pr_diff.txt`.
-- The workflow usually provides the PR description in `pr_description.txt`.
+- The workflow usually provides the PR description in `pr_description.md`.
 - Focus on the spec files changed by this PR.
 - Default behavior: do not post comments or reviews to GitHub directly.
 
-## Review Scope
+## Process
 
 - Evaluate specs for **completeness**: does the spec cover the full scope of the linked issue?
 - Evaluate specs for **clarity**: are requirements, acceptance criteria, and constraints clearly stated and unambiguous?
@@ -83,7 +83,7 @@ Rules:
 - Include only replacement text.
 - For multi-line suggestions, set `start_line` and `start_side` to the first line, and `line` and `side` to the last line.
 
-## Output Format
+## Outputs
 
 Create `review.json` with this shape:
 
@@ -136,27 +136,3 @@ Before finishing:
 - Do not run `gh pr review`, `gh pr comment`, `gh api`, or any other command that posts to GitHub.
 
 Your only output is the final `review.json`.
-
-## Cloud workflow mode
-
-If the prompt says you are in a cloud-environment workflow and the expected local context files are missing:
-
-- Create `pr_description.txt` yourself from the PR body or GitHub metadata provided in the prompt.
-- Fetch and check out the exact PR head branch by name before generating the diff. Run:
-    ```
-    git fetch origin <head_branch>
-    git checkout <head_branch>
-    ```
-  Do NOT use `FETCH_HEAD` — always reference the named branch.
-- Generate the diff against the base branch using a three-dot merge-base diff:
-    ```
-    git diff origin/<base_branch>...HEAD
-    ```
-  This isolates only the changes introduced by the PR, not accumulated state from other branches.
-- Convert the raw diff into `pr_diff.txt` using the annotated format above before reviewing.
-- Still produce `review.json` and validate it with `jq`.
-- When the host already populated `pr_description.txt`, `pr_diff.txt`, or `spec_context.md` in the workflow checkout, use those files as-is and do not try to re-fetch GitHub context yourself.
-- When the prompt inlines the annotated PR diff instead of providing `pr_diff.txt`, write the inlined diff to `pr_diff.txt` exactly before validating `review.json`.
-- The cloud run does not receive `GH_TOKEN`. If the host did not pre-materialize the needed context, follow only the prompt's explicit fallback instructions.
-- After `validate_review_json.py` passes, upload the result via `oz artifact upload review.json` (or `oz-preview artifact upload review.json` if the `oz` CLI is not available). Either CLI is acceptable — use whichever one is installed in the environment. Do not write `review.json` to a `/mnt/...` mount path — the cloud agent has no such mount, and the host workflow only reads what you upload through the artifact CLI.
-- IMPORTANT: the upload subcommand is `artifact` (singular) on both `oz` and `oz-preview`. Do not use `artifacts` (plural) — that is not a valid subcommand and will fail.

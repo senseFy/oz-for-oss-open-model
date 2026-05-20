@@ -14,6 +14,10 @@ from workflows.respond_to_pr_comment import (
 )
 from workflows.create_implementation_from_issue import build_create_implementation_prompt
 from workflows.create_spec_from_issue import build_create_spec_prompt
+from workflows.review_pr import (
+    _format_non_member_review_section,
+    build_review_prompt_for_dispatch,
+)
 from workflows.verify_pr_comment import build_verification_prompt
 
 
@@ -276,69 +280,63 @@ class PrCommentContextBranchSafetyTest(unittest.TestCase):
         self.assertEqual(context["branch_strategy"], "blocked")
 
 
-class PrCommentPromptBranchStrategyTest(unittest.TestCase):
-    def _context(self) -> dict[str, object]:
+
+class ReviewDispatchPromptNonMemberTest(unittest.TestCase):
+    def _base_context(self) -> dict[str, object]:
         return {
             "owner": "acme",
             "repo": "widgets",
             "pr_number": 12,
-            "head_branch": "feature",
-            "head_repo_full_name": "acme/widgets",
-            "base_branch": "main",
-            "base_repo_full_name": "acme/widgets",
             "pr_title": "feat: add widget",
-            "requester": "alice",
-            "trigger_kind": "conversation",
-            "trigger_comment_id": 99,
-            "spec_context_text": "No spec context.",
-            "coauthor_directives": "",
-            "branch_strategy": "push-head",
-            "agent_push_repo_full_name": "acme/widgets",
-            "agent_push_branch": "feature",
+            "pr_body": "Implements the widget flow.",
+            "base_branch": "main",
+            "head_branch": "feature",
+            "trigger_source": "pull_request",
+            "focus_line": "Perform a general review of the pull request.",
+            "issue_line": "#100",
+            "skill_name": "review-pr",
+            "supplemental_skill_line": "Also apply security-review-pr.",
+            "repo_local_section": "",
+            "non_member_review_section": "",
+            "pr_description_text": "PR description body",
+            "pr_diff_text": "diff --git a/src/app.py b/src/app.py\n+++ b/src/app.py\n[NEW:1] print('hello')\n",
+            "spec_context_text": "",
         }
 
-    def test_direct_fork_prompt_targets_fork_head_branch(self) -> None:
-        context = self._context()
-        context.update(
-            {
-                "head_repo_full_name": "contributor/widgets",
-                "base_repo_full_name": "acme/widgets",
-                "agent_push_repo_full_name": "contributor/widgets",
-            }
+    def test_prompt_includes_ownership_area_selection_instructions(self) -> None:
+        context = self._base_context()
+        context["non_member_review_section"] = _format_non_member_review_section(
+            pr_author_login="contributor",
+            ownership_areas_block=(
+                "- MCP (Model Context Protocol)\n"
+                "  owners: @peicodes, @vkodithala\n"
+                "  matches: MCP server connections and resources"
+            ),
+            ownership_areas_loaded=True,
         )
+        prompt = build_review_prompt_for_dispatch(context)
+        self.assertIn("Ownership Areas (from `warpdotdev/warp-ownership`)", prompt)
+        self.assertIn("recommended_area", prompt)
+        self.assertIn("Do NOT invent area names", prompt)
+        self.assertIn("empty string `\"\"`", prompt)
+        self.assertNotIn("exactly one bare GitHub login string", prompt)
 
-        prompt = build_pr_comment_prompt(context)
+    def test_prompt_references_shared_spec_alignment_skill(self) -> None:
+        prompt = build_review_prompt_for_dispatch(self._base_context())
+        self.assertIn("shared `check-impl-against-spec` guidance", prompt)
 
-        self.assertIn("maintainers are allowed to modify the fork head branch", prompt)
-        self.assertIn("push to `contributor/widgets:feature`", prompt)
-        self.assertIn("Do not push a same-named branch to `acme/widgets`", prompt)
-
-    def test_fallback_prompt_requires_metadata_for_follow_up_pr(self) -> None:
-        context = self._context()
-        context.update(
-            {
-                "head_repo_full_name": "contributor/widgets",
-                "base_repo_full_name": "acme/widgets",
-                "branch_strategy": "fallback-pr-to-fork",
-                "agent_push_repo_full_name": "acme/widgets",
-                "agent_push_branch": "oz-agent/respond-pr-12",
-                "fallback_pr_base_repo_full_name": "contributor/widgets",
-                "fallback_pr_base_branch": "feature",
-                "fallback_pr_head": "acme:oz-agent/respond-pr-12",
-            }
+    def test_prompt_includes_stakeholders_fallback_instructions(self) -> None:
+        context = self._base_context()
+        context["non_member_review_section"] = _format_non_member_review_section(
+            pr_author_login="contributor",
+            stakeholders_block="- /docs/ → @docs-owner",
+            ownership_areas_loaded=False,
         )
-
-        prompt = build_pr_comment_prompt(context)
-
-        self.assertIn("maintainers cannot modify the fork head branch", prompt)
-        self.assertIn("Do not push to `contributor/widgets:feature`", prompt)
-        self.assertIn("Create or reuse branch `oz-agent/respond-pr-12`", prompt)
-        self.assertIn(
-            "fetch `contributor/widgets:feature` and make sure `oz-agent/respond-pr-12` starts from that fork head commit",
-            prompt,
-        )
-        self.assertIn("follow-up PR from `acme:oz-agent/respond-pr-12`", prompt)
-        self.assertIn("use `oz-agent/respond-pr-12` exactly", prompt)
+        prompt = build_review_prompt_for_dispatch(context)
+        self.assertIn("Stakeholders (from `.github/STAKEHOLDERS`)", prompt)
+        self.assertIn("recommended_reviewers", prompt)
+        self.assertIn("exactly one bare GitHub login string", prompt)
+        self.assertNotIn("Ownership Areas (from `warpdotdev/warp-ownership`)", prompt)
 
 
 if __name__ == "__main__":

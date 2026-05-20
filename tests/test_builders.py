@@ -91,6 +91,7 @@ class _BuilderTestBase(unittest.TestCase):
         helpers.triggering_comment_prompt_text = MagicMock(  # type: ignore[attr-defined]
             return_value=""
         )
+        helpers.ENFORCEMENT_COMMENT_RUN_ID = "pr-issue-state-enforcement"
 
     def assert_deferred_progress(
         self,
@@ -243,7 +244,7 @@ class BuildReviewRequestTest(_BuilderTestBase):
         pr.get_review_comments.return_value = review_comments or []
         return github_client, repo, pr
 
-    def test_returns_dispatch_request_with_inlined_prompt(self) -> None:
+    def test_returns_dispatch_request_for_review(self) -> None:
         from core.builders import build_review_request
         from core.routing import WORKFLOW_REVIEW_PR
 
@@ -261,10 +262,17 @@ class BuildReviewRequestTest(_BuilderTestBase):
         self.assertEqual(request.installation_id, 1234)
         self.assertEqual(request.title, "PR review #42")
         self.assertEqual(request.skill_name, "review-pr")
-        self.assertEqual(request.prompt, "REVIEW_PROMPT_BODY")
         self.assertEqual(request.payload_subset["pr_number"], 42)
         self.assertIn("pr_diff_text", request.payload_subset)
-        github_client.get_repo.assert_called_once_with("acme/widgets")
+        # ReviewWorkflow fetches both the consuming repo and the
+        # ownership repo (warpdotdev/warp-ownership) via the same
+        # payload-keyed client; both lookups should resolve through
+        # the single ``github_client.get_repo`` mock.
+        get_repo_targets = [
+            call.args[0] for call in github_client.get_repo.call_args_list
+        ]
+        self.assertIn("acme/widgets", get_repo_targets)
+        self.assertIn("warpdotdev/warp-ownership", get_repo_targets)
         # Progress is created after the Oz run id is available.
         self.assertEqual(len(self.progress_instances), 0)
         self.assert_deferred_progress(request)
@@ -511,7 +519,6 @@ class BuildRespondRequestTest(_BuilderTestBase):
         )
         self.assertEqual(request.workflow, WORKFLOW_RESPOND_TO_PR_COMMENT)
         self.assertEqual(request.skill_name, "implement-issue")
-        self.assertEqual(request.prompt, "RESPOND_PROMPT_BODY")
         self.assertEqual(request.payload_subset["trigger_comment_id"], 999)
         # The builder consumed the existing PR handle to gather context.
         repo.get_pull.assert_called_once_with(7)
@@ -680,7 +687,6 @@ class BuildRespondRequestTest(_BuilderTestBase):
         self.assertIsNotNone(request)
         assert request is not None
         self.assertEqual(request.workflow, WORKFLOW_RESPOND_TO_PR_COMMENT)
-        self.assertEqual(request.prompt, "RESPOND_PROMPT_BODY")
         self.assertEqual(request.payload_subset["branch_strategy"], "fallback-pr-to-fork")
         self.assert_deferred_progress(request, start_line="I'm starting")
 
@@ -707,7 +713,7 @@ class BuildVerifyRequestTest(_BuilderTestBase):
             return_value="VERIFY_PROMPT_BODY"
         )
 
-    def test_returns_dispatch_request_with_verify_prompt(self) -> None:
+    def test_returns_dispatch_request_for_verification(self) -> None:
         from core.builders import build_verify_request
         from core.routing import WORKFLOW_VERIFY_PR_COMMENT
 
@@ -729,7 +735,6 @@ class BuildVerifyRequestTest(_BuilderTestBase):
         )
         self.assertEqual(request.workflow, WORKFLOW_VERIFY_PR_COMMENT)
         self.assertEqual(request.skill_name, "verify-pr")
-        self.assertEqual(request.prompt, "VERIFY_PROMPT_BODY")
         self.assertEqual(request.payload_subset["pr_number"], 11)
         self.assertEqual(len(self.progress_instances), 0)
         self.assert_deferred_progress(request)
@@ -775,7 +780,7 @@ class BuildTriageRequestTest(_BuilderTestBase):
             "sender": {"login": "alice"},
         }
 
-    def test_returns_dispatch_request_with_triage_prompt(self) -> None:
+    def test_returns_dispatch_request_for_triage(self) -> None:
         from core.builders import build_triage_request
         from core.routing import WORKFLOW_TRIAGE_NEW_ISSUES
 
@@ -792,7 +797,6 @@ class BuildTriageRequestTest(_BuilderTestBase):
         self.assertEqual(request.installation_id, 4242)
         self.assertEqual(request.title, "Triage issue #91")
         self.assertEqual(request.skill_name, "triage-issue")
-        self.assertEqual(request.prompt, "TRIAGE_PROMPT_BODY")
         self.assertEqual(request.payload_subset["issue_number"], 91)
         self.assertEqual(len(self.progress_instances), 0)
         self.assert_deferred_progress(request)
@@ -894,7 +898,6 @@ class BuildPlanApprovedRequestTest(_BuilderTestBase):
         )
         self.assertEqual(request.title, "Implement issue #91 (plan-approved)")
         self.assertEqual(request.skill_name, "implement-specs")
-        self.assertEqual(request.prompt, "PLAN_APPROVED_IMPL_PROMPT")
         self.assertEqual(request.payload_subset["issue_number"], 91)
         self.assertEqual(
             request.payload_subset["trigger_source"], "plan-approved"

@@ -11,11 +11,11 @@ Audit the current pull request for security concerns and fold any findings into 
 
 Provide a focused security pass on top of the general PR review. This is a supplement to `review-pr`, not a separate output. Findings must be merged into the single combined `review.json` so reviewers receive one cohesive review.
 
-## Context
+## Inputs
 
 - The working directory is the PR branch checkout.
 - The workflow usually provides an annotated diff in `pr_diff.txt`.
-- The workflow usually provides the PR description in `pr_description.txt`.
+- The workflow usually provides the PR description in `pr_description.md`.
 - Focus on the files and lines changed by this PR.
 - Default behavior: do not post comments or reviews to GitHub directly.
 
@@ -75,15 +75,15 @@ Evaluate each changed hunk against the following concerns. Treat the list as a c
 - CORS, cookies, or headers weakened in scope without an explicit justification.
 - Permissive file modes on newly created files that contain sensitive material.
 
-## How to evaluate
+## Process
 
-1. Read `pr_description.txt` and `pr_diff.txt` to understand the scope and intent of the change.
+1. Read `pr_description.md` and `pr_diff.txt` to understand the scope and intent of the change.
 2. For each changed hunk, consider which of the concerns above could plausibly apply given the surrounding code in the checkout.
 3. Prefer evidence-based findings tied to specific changed lines. If a concern only applies to untouched code, describe it in the review summary instead of as an inline comment.
 4. Do not flag purely stylistic or non-security issues here — those belong in the base `review-pr` pass.
 5. Do not repeat findings already covered by the base review; if the base pass would naturally catch it, leave it there.
 
-## How to report findings
+## Outputs
 
 - Do not create a separate report file.
 - Fold security findings into the same `review.json` produced by `review-pr`.
