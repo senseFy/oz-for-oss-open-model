@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -90,6 +91,60 @@ class CreateImplementationApplyTest(unittest.TestCase):
         self.assertEqual(
             branch_updated_since.call_args.kwargs["created_after"],
             run_created_at.replace(tzinfo=timezone.utc) - timedelta(minutes=1),
+        )
+
+
+class CreateImplementationTriggeringCommentTest(unittest.TestCase):
+    """The implementation run must carry the triggering comment forward,
+    matching the triage and spec workflows."""
+
+    def _triggering_attachment(self, context: dict[str, object]) -> str:
+        from core.workflows.create_implementation_from_issue import (
+            create_implementation_context_attachments,
+        )
+
+        attachment = next(
+            a
+            for a in create_implementation_context_attachments(context)
+            if a["file_name"] == "triggering_comment.md"
+        )
+        return base64.b64decode(attachment["data"]).decode("utf-8")
+
+    def test_comment_forwarded_to_attachment_and_prompt(self) -> None:
+        from core.workflows.create_implementation_from_issue import (
+            build_create_implementation_prompt,
+        )
+
+        comment = "@alice commented:\nimplement but skip the migration"
+        self.assertEqual(
+            self._triggering_attachment(
+                {"spec_context_text": "Spec body", "triggering_comment_text": comment}
+            ),
+            comment,
+        )
+
+        prompt = build_create_implementation_prompt(
+            owner="acme",
+            repo="widgets",
+            issue_number=12,
+            issue_title="Add retries",
+            issue_labels=["ready-to-implement"],
+            issue_assignees=["oz-agent"],
+            spec_context_text="Spec body",
+            triggering_comment_text=comment,
+            target_branch="oz-agent/implement-issue-12",
+            default_branch="main",
+            implement_specs_skill_path="a",
+            spec_driven_implementation_skill_path="b",
+            implement_issue_skill_path="c",
+            coauthor_directives="",
+        )
+        self.assertIn("triggering_comment.md", prompt)
+
+    def test_missing_comment_uses_none_placeholder(self) -> None:
+        self.assertEqual(
+            self._triggering_attachment({"spec_context_text": "Spec body"}),
+            "- None",
         )
 
 
