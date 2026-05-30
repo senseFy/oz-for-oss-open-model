@@ -258,54 +258,46 @@ def _format_issue_numbers(numbers: list[int]) -> str:
     return ", ".join(f"#{number}" for number in numbers)
 
 
-def _format_issue_status(status: IssueReadinessStatus, *, required_label: str) -> str:
-    readiness_text = (
-        ", ".join(f"`{label}`" for label in status.readiness_labels)
-        if status.readiness_labels
-        else "none"
-    )
-    if status.is_pull_request:
-        state = "is a pull request, not an issue"
-    elif status.has_required_label:
-        state = f"has `{required_label}`"
-    else:
-        state = f"missing `{required_label}`"
-    return f"- #{status.number}: {state}; readiness labels present: {readiness_text}"
-
-
 def _format_pr_issue_state_failure_message(
     check: Mapping[str, Any],
     *,
     requester: str,
+    owner: str,
+    repo: str,
+    default_branch: str,
 ) -> str:
     required_label = str(check["required_label"])
     issue_numbers = [int(number) for number in check.get("issue_numbers") or []]
-    associated_text = _format_issue_numbers(issue_numbers) if issue_numbers else "none"
-    opening = (
-        f"This PR is not linked to an issue that is marked with `{required_label}`."
+    branch = default_branch.strip() or "main"
+    contributing_url = (
+        f"https://github.com/{owner}/{repo}/blob/{branch}/CONTRIBUTING.md"
     )
     sections: list[str] = []
     normalized_requester = requester.strip().removeprefix("@")
     if normalized_requester:
         sections.append(f"@{normalized_requester}")
-    sections.extend(
-        [
-            opening,
-            "Issue-state enforcement details:",
-            f"- Associated same-repo issues checked: {associated_text}",
-            f"- Required readiness label: `{required_label}`",
-        ]
+    sections.append(
+        "Every PR must be linked to a same-repo issue before Oz can review it."
     )
-    statuses = check.get("issue_statuses") or []
-    if statuses:
-        sections.append("Readiness check:")
-        sections.extend(
-            _format_issue_status(status, required_label=required_label)
-            for status in statuses
+    if issue_numbers:
+        issue_text = _format_issue_numbers(issue_numbers)
+        sections.append(
+            f"This PR is linked to {issue_text}, but no linked issue is marked "
+            f"`{required_label}` yet. Only the Warp team applies that label, so "
+            "please wait for a maintainer to mark the issue. Once it is marked, "
+            "push a new commit or comment `/oz-review` to re-trigger review."
+        )
+    else:
+        sections.append(
+            "**Next step:** open or find a same-repo issue describing this change, "
+            "then link it to this PR by adding `Closes #123` to the PR description "
+            "(or using the \"Development\" sidebar on GitHub). A maintainer will "
+            f"mark the issue `{required_label}` when it is ready and review will "
+            "run automatically."
         )
     sections.append(
-        f"To continue, link this PR to a same-repo issue such as `Closes #123` "
-        f"in the PR description, and make sure that issue has `{required_label}`."
+        f"See the [contribution guidelines]({contributing_url}) for the full "
+        "readiness model."
     )
     return "\n\n".join(sections)
 
@@ -364,9 +356,13 @@ def enforce_pr_issue_state_for_review(
             "review-pr: cannot post issue-state enforcement review without a PR number"
         )
         return False
+    default_branch = str(getattr(github, "default_branch", "") or "main")
     failure_body = _format_pr_issue_state_failure_message(
         check,
         requester=requester,
+        owner=owner,
+        repo=repo,
+        default_branch=default_branch,
     )
     _upsert_pr_issue_state_enforcement_comment(
         github,

@@ -40,7 +40,7 @@ For smaller changes, we can go straight from issue to code. For larger changes, 
 
 ## Who decides readiness
 
-Contributors can file issues, comment on issues and PRs, and open PRs directly. The Warp team is still the group that decides whether an issue is ready for speccing or ready for implementation. Contributors should not treat discussion alone as approval to start a spec or code change if the readiness label is missing.
+Only the Warp team applies the `ready-to-spec` and `ready-to-implement` labels. Contributors cannot set or request them directly and should not treat discussion alone as approval to start a spec or code change while those labels are missing. File issues, comment on issues and PRs, and open PRs freely — but wait for one of those labels before opening a spec or code PR against an issue.
 
 ## A note on parallel work
 
