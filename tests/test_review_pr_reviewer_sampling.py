@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -844,6 +845,149 @@ class ApplyReviewResultTeamReviewerTest(unittest.TestCase):
         message = progress.complete.call_args[0][0]
         self.assertIn("oss-maintainers", message)
         self.assertIn("requested human review", message)
+
+
+class RequiresHumanReviewerEscalationTest(unittest.TestCase):
+    """``requires_human_reviewer`` keys on author identity."""
+
+    def _make_pr(
+        self,
+        *,
+        login: str,
+        user_type: str,
+        association: str,
+        filenames: list[str],
+    ) -> SimpleNamespace:
+        files = [
+            SimpleNamespace(
+                filename=name,
+                previous_filename=None,
+                status="added",
+                patch=None,
+            )
+            for name in filenames
+        ]
+        return SimpleNamespace(
+            user=SimpleNamespace(login=login, type=user_type),
+            author_association=association,
+            title="feat: change",
+            body="body",
+            base=SimpleNamespace(ref="main"),
+            head=SimpleNamespace(ref="feature"),
+            get_files=lambda: list(files),
+        )
+
+    def _gather(self, pr: SimpleNamespace) -> dict:
+        github = MagicMock()
+        github.get_pull.return_value = pr
+        with patch(
+            "workflows.review_pr.resolve_issue_number_for_pr", return_value=None
+        ), patch(
+            "workflows.review_pr.repo_local_skill_path_for_dispatch",
+            return_value=None,
+        ), patch(
+            "workflows.review_pr.resolve_spec_context_for_pr_via_api",
+            return_value={},
+        ), patch(
+            "workflows.review_pr.load_stakeholders_from_repo",
+            return_value=STAKEHOLDERS,
+        ), patch(
+            "workflows.review_pr._build_diff_maps", return_value=({}, {})
+        ):
+            return gather_review_context(
+                github,
+                owner="acme",
+                repo="widgets",
+                pr_number=7,
+                trigger_source="pull_request",
+                requester="alice",
+                workspace_path=Path("/tmp"),
+            )
+
+    def _apply_approve(self, context: dict) -> MagicMock:
+        pr = MagicMock()
+        github = MagicMock()
+        github.get_pull.return_value = pr
+        with patch(
+            "workflows.review_pr.load_stakeholders_from_repo",
+            return_value=STAKEHOLDERS,
+        ):
+            apply_review_result(
+                github,
+                context=context,
+                run=MagicMock(),
+                result={
+                    "verdict": "APPROVE",
+                    "summary": "Looks good",
+                    "comments": [],
+                    "recommended_area": "",
+                },
+                progress=MagicMock(),
+            )
+        return pr
+
+    def test_bot_and_external_authors_request_reviewer_on_approve(self) -> None:
+        cases = [
+            ("oz-spec", "oz-for-oss[bot]", "Bot", "NONE", ["specs/GH1/product.md"]),
+            ("oz-impl", "oz-for-oss[bot]", "Bot", "NONE", ["core/app.py"]),
+            ("external-spec", "contributor", "User", "CONTRIBUTOR", ["specs/GH1/product.md"]),
+            ("external-impl", "contributor", "User", "CONTRIBUTOR", ["core/app.py"]),
+        ]
+        for label, login, user_type, association, filenames in cases:
+            with self.subTest(case=label):
+                context = self._gather(
+                    self._make_pr(
+                        login=login,
+                        user_type=user_type,
+                        association=association,
+                        filenames=filenames,
+                    )
+                )
+                self.assertTrue(context["requires_human_reviewer"])
+                self.assertTrue(context["non_member_review_section"])
+                pr = self._apply_approve(context)
+                pr.create_review_request.assert_called_once()
+
+    def test_member_pr_never_requires_human_reviewer(self) -> None:
+        for filenames in (["specs/GH1/product.md"], ["core/app.py"]):
+            with self.subTest(filenames=filenames):
+                context = self._gather(
+                    self._make_pr(
+                        login="maintainer",
+                        user_type="User",
+                        association="MEMBER",
+                        filenames=filenames,
+                    )
+                )
+                self.assertFalse(context["requires_human_reviewer"])
+                self.assertEqual(context["non_member_review_section"], "")
+                pr = self._apply_approve(context)
+                pr.create_review_request.assert_not_called()
+
+    def test_oz_authored_reject_stays_comment_event(self) -> None:
+        context = self._gather(
+            self._make_pr(
+                login="oz-for-oss[bot]",
+                user_type="Bot",
+                association="NONE",
+                filenames=["core/app.py"],
+            )
+        )
+        self.assertTrue(context["requires_human_reviewer"])
+        self.assertFalse(context["is_non_member"])
+        pr = MagicMock()
+        github = MagicMock()
+        github.get_pull.return_value = pr
+        apply_review_result(
+            github,
+            context=context,
+            run=MagicMock(),
+            result={"verdict": "REJECT", "summary": "Needs work", "comments": []},
+            progress=MagicMock(),
+        )
+        pr.create_review.assert_called_once()
+        self.assertEqual(pr.create_review.call_args.kwargs["event"], "COMMENT")
+        pr.create_review_request.assert_not_called()
 
 
 if __name__ == "__main__":

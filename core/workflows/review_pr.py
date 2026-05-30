@@ -797,8 +797,8 @@ def _format_non_member_review_section(
     if ownership_areas_loaded:
         return dedent(
             f"""
-            Non-Member Reviewer Selection:
-            - The PR author (@{pr_author_login or 'unknown'}) is not a repository member or collaborator, so the workflow should request exactly one human reviewer when your `verdict` is `"APPROVE"`.
+            Reviewer Selection:
+            - This pull request needs a human reviewer (its author @{pr_author_login or 'unknown'} is an automation account or an external contributor), so the workflow should request exactly one human reviewer when your `verdict` is `"APPROVE"`.
             - If your `verdict` is `"REJECT"`, the workflow will post a GitHub `REQUEST_CHANGES` review and will not request a human reviewer.
             - Return a `recommended_area` field alongside `verdict`, `body`, and `comments`. Example: {{"recommended_area": "MCP (Model Context Protocol)"}}.
             - `recommended_area` must be EXACTLY ONE area name copied verbatim from the "Ownership Areas" list below. Match the PR title, body, and changed files to the area whose `matches:` description best describes the change.
@@ -817,8 +817,8 @@ def _format_non_member_review_section(
         ).strip()
     return dedent(
         f"""
-        Non-Member Reviewer Selection:
-        - The PR author (@{pr_author_login or 'unknown'}) is not a repository member or collaborator, so the workflow should request exactly one human reviewer when your `verdict` is `"APPROVE"`.
+        Reviewer Selection:
+        - This pull request needs a human reviewer (its author @{pr_author_login or 'unknown'} is an automation account or an external contributor), so the workflow should request exactly one human reviewer when your `verdict` is `"APPROVE"`.
         - If your `verdict` is `"REJECT"`, the workflow will post a GitHub `REQUEST_CHANGES` review and will not request a human reviewer.
         - Return a `recommended_reviewers` field alongside `verdict`, `body`, and `comments`.
         - `recommended_reviewers` must be a JSON list with exactly one bare GitHub login string, for example: {{"recommended_reviewers": ["octocat"]}}.
@@ -951,6 +951,7 @@ class ReviewContext(TypedDict):
     diff_line_map: dict[str, dict[str, list[int]]]
     diff_content_map: dict[str, dict[str, dict[str, str]]]
     is_non_member: bool
+    requires_human_reviewer: bool
     spec_only: bool
     pr_author_login: str
     stakeholder_logins: list[str]
@@ -1069,6 +1070,10 @@ def gather_review_context(
         else ""
     )
     is_non_member = _is_non_member_pr(pr) and not spec_only
+    # Bot-authored and external-contributor PRs require a human reviewer.
+    requires_human_reviewer = (
+        is_automation_user(getattr(pr, "user", None)) or _is_non_member_pr(pr)
+    )
     pr_author_login = str(
         getattr(getattr(pr, "user", None), "login", "") or ""
     )
@@ -1077,7 +1082,7 @@ def gather_review_context(
     pr_assignee_reviewers: list[str] = []
     ownership_areas_serialized: list[dict[str, Any]] = []
     ownership_areas_loaded = False
-    if is_non_member:
+    if requires_human_reviewer:
         pr_assignee_reviewers = _reviewer_from_pr_assignee(
             pr,
             pr_author_login=pr_author_login,
@@ -1170,6 +1175,7 @@ def gather_review_context(
         diff_line_map=_serialize_diff_line_map(diff_line_map),
         diff_content_map=_serialize_diff_content_map(diff_content_map),
         is_non_member=bool(is_non_member),
+        requires_human_reviewer=bool(requires_human_reviewer),
         spec_only=bool(spec_only),
         pr_author_login=pr_author_login,
         stakeholder_logins=sorted(_stakeholder_logins(stakeholders_entries)),
@@ -1323,6 +1329,12 @@ def apply_review_result(
     pr_number = int(context["pr_number"])
     requester = str(context.get("requester") or "")
     is_non_member = bool(context.get("is_non_member"))
+    # Human reviewer escalation for bot- and external-contributor PRs is now controlled by the
+    # requires_human_reviewer flag. For backward compatibility with older serialized contexts,
+    # is_non_member is used as a fallback if the flag is missing.
+    requires_human_reviewer = bool(
+        context.get("requires_human_reviewer", is_non_member)
+    )
     pr_author_login = str(context.get("pr_author_login") or "")
     raw_stakeholder_entries = context.get("stakeholder_entries") or []
     stakeholder_entries = [
@@ -1365,7 +1377,7 @@ def apply_review_result(
         if is_non_member and verdict == _VERDICT_REJECT
         else "COMMENT"
     )
-    if is_non_member and verdict == _VERDICT_APPROVE:
+    if requires_human_reviewer and verdict == _VERDICT_APPROVE:
         recommended_reviewers = _reviewer_from_pr_assignee(
             pr,
             pr_author_login=pr_author_login,
