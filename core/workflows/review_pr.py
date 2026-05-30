@@ -48,6 +48,7 @@ from oz.review_validation import (
     serialize_diff_line_map as _serialize_diff_line_map,
 )
 from oz.triage import (
+    decode_repo_text_file,
     format_stakeholders_for_prompt,
     load_stakeholders_from_repo,
 )
@@ -258,20 +259,29 @@ def _format_issue_numbers(numbers: list[int]) -> str:
     return ", ".join(f"#{number}" for number in numbers)
 
 
+def _resolve_contributing_url(
+    github: Repository, owner: str, repo: str
+) -> str | None:
+    """Return a link to the consuming repo's ``CONTRIBUTING.md`` when present.
+
+    The control plane runs against any repo that installs the GitHub App, so
+    we can't assume the file exists. Probe via the GitHub API and skip the
+    link when the file is absent rather than emitting a 404 in the message.
+    """
+    if decode_repo_text_file(github, "CONTRIBUTING.md") is None:
+        return None
+    branch = str(getattr(github, "default_branch", "") or "main").strip() or "main"
+    return f"https://github.com/{owner}/{repo}/blob/{branch}/CONTRIBUTING.md"
+
+
 def _format_pr_issue_state_failure_message(
     check: Mapping[str, Any],
     *,
     requester: str,
-    owner: str,
-    repo: str,
-    default_branch: str,
+    contributing_url: str | None,
 ) -> str:
     required_label = str(check["required_label"])
     issue_numbers = [int(number) for number in check.get("issue_numbers") or []]
-    branch = default_branch.strip() or "main"
-    contributing_url = (
-        f"https://github.com/{owner}/{repo}/blob/{branch}/CONTRIBUTING.md"
-    )
     sections: list[str] = []
     normalized_requester = requester.strip().removeprefix("@")
     if normalized_requester:
@@ -283,8 +293,8 @@ def _format_pr_issue_state_failure_message(
         issue_text = _format_issue_numbers(issue_numbers)
         sections.append(
             f"This PR is linked to {issue_text}, but no linked issue is marked "
-            f"`{required_label}` yet. Only the Warp team applies that label, so "
-            "please wait for a maintainer to mark the issue. Once it is marked, "
+            f"`{required_label}` yet. Only repository maintainers apply that label, "
+            "so please wait for a maintainer to mark the issue. Once it is marked, "
             "push a new commit or comment `/oz-review` to re-trigger review."
         )
     else:
@@ -295,10 +305,11 @@ def _format_pr_issue_state_failure_message(
             f"mark the issue `{required_label}` when it is ready and review will "
             "run automatically."
         )
-    sections.append(
-        f"See the [contribution guidelines]({contributing_url}) for the full "
-        "readiness model."
-    )
+    if contributing_url:
+        sections.append(
+            f"See the [contribution guidelines]({contributing_url}) for the full "
+            "readiness model."
+        )
     return "\n\n".join(sections)
 
 
@@ -356,13 +367,10 @@ def enforce_pr_issue_state_for_review(
             "review-pr: cannot post issue-state enforcement review without a PR number"
         )
         return False
-    default_branch = str(getattr(github, "default_branch", "") or "main")
     failure_body = _format_pr_issue_state_failure_message(
         check,
         requester=requester,
-        owner=owner,
-        repo=repo,
-        default_branch=default_branch,
+        contributing_url=_resolve_contributing_url(github, owner, repo),
     )
     _upsert_pr_issue_state_enforcement_comment(
         github,
