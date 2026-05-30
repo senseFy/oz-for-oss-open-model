@@ -228,6 +228,7 @@ class ApplyPlanApprovedSyncTest(_PlanApprovedTestBase):
         self.assertEqual(result["linked_issue_number"], 91)
         self.assertTrue(result["comment_posted"])
         self.assertTrue(result["label_removed"])
+        self.assertTrue(result["ready_to_implement_added"])
         self.assertFalse(result["implementation_triggered"])
         # Sync helper mutates the payload so the dispatch builder can
         # reuse the resolved number even when implementation IS needed.
@@ -237,6 +238,7 @@ class ApplyPlanApprovedSyncTest(_PlanApprovedTestBase):
         self.assertIn("PR #121", body)
         self.assertIn("https://github.com/acme/widgets/pull/121", body)
         issue.remove_from_labels.assert_called_once_with("ready-to-spec")
+        issue.add_to_labels.assert_called_once_with("ready-to-implement")
 
     def test_existing_comment_is_not_re_posted(self) -> None:
         # Idempotency: a prior plan-approved comment on the issue
@@ -284,6 +286,9 @@ class ApplyPlanApprovedSyncTest(_PlanApprovedTestBase):
         self.assertEqual(payload.get("linked_issue_number"), 91)
         issue.create_comment.assert_called_once()
         issue.remove_from_labels.assert_called_once_with("ready-to-spec")
+        # The label add runs idempotently even when ``ready-to-implement``
+        # is already present (and the issue falls through to dispatch).
+        issue.add_to_labels.assert_called_once_with("ready-to-implement")
 
     def test_spec_only_filenames_qualify_without_spec_branch(self) -> None:
         # PR on an unusual branch still qualifies if every changed
