@@ -12,7 +12,6 @@ from github.GithubException import GithubException
 
 from workflows.review_pr import (  # type: ignore[import-not-found]
     _deterministic_reviewer_from_stakeholders,
-    _format_assignee_review_section,
     _format_non_member_review_section,
     _format_review_completion_message,
     _is_team_slug,
@@ -256,7 +255,7 @@ class PrAssigneeReviewerTest(unittest.TestCase):
 
         self.assertEqual(context["pr_assignee_reviewers"], ["assigned-owner"])
         self.assertFalse(context["ownership_areas_loaded"])
-        self.assertIn("assigned to @assigned-owner", context["non_member_review_section"])
+        self.assertEqual(context["non_member_review_section"], "")
         load_ownership.assert_not_called()
 
 
@@ -278,14 +277,6 @@ class OwnershipAreasPromptSectionTest(unittest.TestCase):
         self.assertIn("empty string `\"\"`", prompt)
         self.assertIn("`verdict` is `\"APPROVE\"`", prompt)
         self.assertIn("REQUEST_CHANGES", prompt)
-
-    def test_assignee_prompt_omits_area_and_reviewer_fields(self) -> None:
-        prompt = _format_assignee_review_section(
-            pr_author_login="contributor",
-            reviewer_login="assigned-owner",
-        )
-        self.assertIn("assigned to @assigned-owner", prompt)
-        self.assertIn("Do not return `recommended_area` or `recommended_reviewers`", prompt)
 
     def test_fallback_prompt_keeps_legacy_stakeholders_contract(self) -> None:
         prompt = _format_non_member_review_section(

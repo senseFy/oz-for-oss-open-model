@@ -824,23 +824,6 @@ def _format_non_member_review_section(
     ).strip()
 
 
-def _format_assignee_review_section(
-    *,
-    pr_author_login: str,
-    reviewer_login: str,
-) -> str:
-    return dedent(
-        f"""
-        Non-Member Reviewer Selection:
-        - The PR author (@{pr_author_login or 'unknown'}) is not a repository member or collaborator, so the workflow should request exactly one human reviewer when your `verdict` is `"APPROVE"`.
-        - This PR is already assigned to @{reviewer_login}; the workflow will request that assignee as the human reviewer for an `"APPROVE"` verdict.
-        - If your `verdict` is `"REJECT"`, the workflow will post a GitHub `REQUEST_CHANGES` review and will not request a human reviewer.
-        - Do not return `recommended_area` or `recommended_reviewers`; the workflow already has the assignee-based reviewer.
-        - Do not call GitHub yourself to post the review or request reviewers.
-        """
-    ).strip()
-
-
 def _format_pr_description(
     *,
     pr_number: int,
@@ -1089,12 +1072,7 @@ def gather_review_context(
             pr,
             pr_author_login=pr_author_login,
         )
-        if pr_assignee_reviewers:
-            non_member_review_section = _format_assignee_review_section(
-                pr_author_login=pr_author_login,
-                reviewer_login=pr_assignee_reviewers[0],
-            )
-        else:
+        if not pr_assignee_reviewers:
             # Prefer the canonical ``warpdotdev/warp-ownership`` mapping when
             # an ownership-repo client is wired in. The agent picks one area
             # from the parsed list; Vercel resolves the area to an owner
