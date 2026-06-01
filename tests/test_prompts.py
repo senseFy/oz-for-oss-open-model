@@ -259,13 +259,17 @@ class ReviewDispatchPromptNonMemberTest(unittest.TestCase):
                 "  owners: @peicodes, @vkodithala\n"
                 "  matches: MCP server connections and resources"
             ),
+            stakeholders_block="- * → @fallback-owner",
             ownership_areas_loaded=True,
         )
         prompt = build_review_prompt_for_dispatch(context)
         self.assertIn("Ownership Areas (from `warpdotdev/warp-ownership`)", prompt)
+        self.assertIn("Fallback Stakeholders (from `.github/STAKEHOLDERS`)", prompt)
+        self.assertIn("Use `.github/STAKEHOLDERS` only as the fallback source", prompt)
         self.assertIn("recommended_area", prompt)
         self.assertIn("Do NOT invent area names", prompt)
         self.assertIn("empty string `\"\"`", prompt)
+        self.assertIn("- * → @fallback-owner", prompt)
         self.assertNotIn("exactly one bare GitHub login string", prompt)
 
     def test_prompt_includes_stakeholders_fallback_instructions(self) -> None:
