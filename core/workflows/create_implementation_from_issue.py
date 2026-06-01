@@ -47,7 +47,7 @@ WORKFLOW_NAME = "create-implementation-from-issue"
 IMPLEMENT_SPECS_SKILL = "implement-specs"
 SPEC_DRIVEN_IMPLEMENTATION_SKILL = "spec-driven-implementation"
 IMPLEMENT_ISSUE_SKILL = "implement-issue"
-FETCH_CONTEXT_SCRIPT = ".agents/shared/scripts/implement-specs/fetch_github_context.py"
+FETCH_CONTEXT_SCRIPT = ".agents/shared/scripts/fetch_github_context.py"
 _SPEC_CONTEXT_ATTACHMENT = "spec_context.md"
 _CREATE_IMPLEMENTATION_ATTACHMENT_PAYLOAD_FIELDS = {
     "spec_context_text",

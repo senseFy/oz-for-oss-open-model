@@ -72,7 +72,7 @@ _PR_DESCRIPTION_ATTACHMENT = "pr_description.md"
 _PR_DIFF_ATTACHMENT = "pr_diff.txt"
 _SPEC_CONTEXT_ATTACHMENT = "spec_context.md"
 _OWNERSHIP_AREAS_ATTACHMENT = "ownership_areas.json"
-_OWNERSHIP_AREA_VALIDATOR_SCRIPT = ".agents/shared/scripts/review-pr/validate_ownership_area.py"
+_OWNERSHIP_AREA_VALIDATOR_SCRIPT = ".agents/shared/scripts/validate_ownership_area.py"
 _REVIEW_ATTACHMENT_PAYLOAD_FIELDS = {
     "pr_body",
     "pr_description_text",

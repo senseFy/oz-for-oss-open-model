@@ -36,13 +36,13 @@ Usage
 
 Set ``GH_TOKEN`` or ``GITHUB_TOKEN`` in the environment. Then::
 
-    python .agents/shared/scripts/implement-specs/fetch_github_context.py --repo OWNER/REPO issue \\
+    python .agents/shared/scripts/fetch_github_context.py --repo OWNER/REPO issue \\
         --number N
 
-    python .agents/shared/scripts/implement-specs/fetch_github_context.py --repo OWNER/REPO pr \\
+    python .agents/shared/scripts/fetch_github_context.py --repo OWNER/REPO pr \\
         --number N [--include-diff]
 
-    python .agents/shared/scripts/implement-specs/fetch_github_context.py --repo OWNER/REPO pr-diff \\
+    python .agents/shared/scripts/fetch_github_context.py --repo OWNER/REPO pr-diff \\
         --number N
 
 The default repository is the current ``GITHUB_REPOSITORY`` environment

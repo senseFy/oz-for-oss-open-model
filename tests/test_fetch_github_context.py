@@ -12,7 +12,6 @@ def _load_fetch_github_context():
         / ".agents"
         / "shared"
         / "scripts"
-        / "implement-specs"
         / "fetch_github_context.py"
     )
     spec = importlib.util.spec_from_file_location("fetch_github_context", script_path)
