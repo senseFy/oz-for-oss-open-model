@@ -191,9 +191,10 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
 
 
 class EnforcePrIssueStateForReviewTest(unittest.TestCase):
-    def test_blocked_pr_posts_actionable_comment_and_changes_requested_review(self) -> None:
+    def test_blocked_pr_with_no_linked_issue_posts_actionable_comment(self) -> None:
         pr_issue = _IssueWithComments()
         repo = _Repo({7: pr_issue})
+        repo.default_branch = "main"
         reviews_created: list[dict] = []
 
         def _create_review(body: str, event: str) -> None:
@@ -208,27 +209,126 @@ class EnforcePrIssueStateForReviewTest(unittest.TestCase):
             create_review=_create_review,
         )
 
-        allowed = enforce_pr_issue_state_for_review(
-            repo,  # type: ignore[arg-type]
-            owner="acme",
-            repo="widgets",
-            pr=pr,
-            requester="alice",
-        )
+        with patch(
+            "workflows.review_pr.decode_repo_text_file",
+            return_value="# Contributing",
+        ):
+            allowed = enforce_pr_issue_state_for_review(
+                repo,  # type: ignore[arg-type]
+                owner="acme",
+                repo="widgets",
+                pr=pr,
+                requester="alice",
+            )
 
         self.assertFalse(allowed)
         self.assertEqual(len(pr_issue.comments), 1)
         body = pr_issue.comments[0].body
         self.assertIn("@alice", body)
-        self.assertIn("This PR is not linked to an issue that is marked with `ready-to-implement`", body)
-        self.assertIn("Required readiness label: `ready-to-implement`", body)
+        self.assertIn("Every PR must be linked to a same-repo issue", body)
+        self.assertIn("Next step", body)
         self.assertIn("Closes #123", body)
-        self.assertNotIn("PR description issue reference", body)
-        # Verify REQUEST_CHANGES review was posted
+        self.assertIn(
+            "https://github.com/acme/widgets/blob/main/CONTRIBUTING.md",
+            body,
+        )
+        # Verify REQUEST_CHANGES review was posted with the same body.
         self.assertEqual(len(reviews_created), 1)
         self.assertEqual(reviews_created[0]["event"], "REQUEST_CHANGES")
-        self.assertIn("not linked to an issue", reviews_created[0]["body"])
+        self.assertIn("Every PR must be linked to a same-repo issue", reviews_created[0]["body"])
 
+    def test_blocked_pr_with_linked_unready_issue_defers_to_maintainer(self) -> None:
+        pr_issue = _IssueWithComments()
+        linked_issue = _issue("triaged")
+        repo = _Repo({9: pr_issue, 100: linked_issue})
+        repo.default_branch = "develop"
+        reviews_created: list[dict] = []
+
+        def _create_review(body: str, event: str) -> None:
+            reviews_created.append({"body": body, "event": event})
+
+        pr = SimpleNamespace(
+            number=9,
+            body="",
+            user=SimpleNamespace(login="external-user", type="User"),
+            author_association="NONE",
+            get_files=lambda: [_file("core/routing.py")],
+            create_review=_create_review,
+        )
+
+        association = {
+            "same_repo_issue_numbers": [100],
+            "github_linked_issues": [
+                {
+                    "owner": "acme",
+                    "repo": "widgets",
+                    "number": 100,
+                    "source": "closingIssuesReferences",
+                }
+            ],
+            "deterministic_issue_numbers": [],
+            "primary_issue_number": 100,
+            "ambiguous": False,
+        }
+        with patch(
+            "workflows.review_pr.resolve_pr_association",
+            return_value=association,
+        ), patch(
+            "workflows.review_pr.decode_repo_text_file",
+            return_value="# Contributing",
+        ):
+            allowed = enforce_pr_issue_state_for_review(
+                repo,  # type: ignore[arg-type]
+                owner="acme",
+                repo="widgets",
+                pr=pr,
+                requester="alice",
+            )
+
+        self.assertFalse(allowed)
+        self.assertEqual(len(pr_issue.comments), 1)
+        body = pr_issue.comments[0].body
+        self.assertIn("#100", body)
+        self.assertIn("Only repository maintainers apply that label", body)
+        self.assertIn("`ready-to-implement`", body)
+        self.assertIn(
+            "https://github.com/acme/widgets/blob/develop/CONTRIBUTING.md",
+            body,
+        )
+        self.assertEqual(reviews_created[0]["event"], "REQUEST_CHANGES")
+
+    def test_blocked_pr_without_contributing_md_omits_link(self) -> None:
+        pr_issue = _IssueWithComments()
+        repo = _Repo({11: pr_issue})
+        repo.default_branch = "main"
+        reviews_created: list[dict] = []
+
+        pr = SimpleNamespace(
+            number=11,
+            body="",
+            user=SimpleNamespace(login="external-user", type="User"),
+            author_association="NONE",
+            get_files=lambda: [_file("core/routing.py")],
+            create_review=lambda body, event: reviews_created.append(
+                {"body": body, "event": event}
+            ),
+        )
+
+        with patch(
+            "workflows.review_pr.decode_repo_text_file",
+            return_value=None,
+        ):
+            enforce_pr_issue_state_for_review(
+                repo,  # type: ignore[arg-type]
+                owner="acme",
+                repo="widgets",
+                pr=pr,
+                requester="alice",
+            )
+
+        body = pr_issue.comments[0].body
+        self.assertIn("Every PR must be linked to a same-repo issue", body)
+        self.assertNotIn("CONTRIBUTING.md", body)
 
     def test_org_member_pr_skips_enforcement(self) -> None:
         pr_issue = _IssueWithComments()

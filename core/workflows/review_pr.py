@@ -48,6 +48,7 @@ from oz.review_validation import (
     serialize_diff_line_map as _serialize_diff_line_map,
 )
 from oz.triage import (
+    decode_repo_text_file,
     format_stakeholders_for_prompt,
     load_stakeholders_from_repo,
 )
@@ -258,55 +259,57 @@ def _format_issue_numbers(numbers: list[int]) -> str:
     return ", ".join(f"#{number}" for number in numbers)
 
 
-def _format_issue_status(status: IssueReadinessStatus, *, required_label: str) -> str:
-    readiness_text = (
-        ", ".join(f"`{label}`" for label in status.readiness_labels)
-        if status.readiness_labels
-        else "none"
-    )
-    if status.is_pull_request:
-        state = "is a pull request, not an issue"
-    elif status.has_required_label:
-        state = f"has `{required_label}`"
-    else:
-        state = f"missing `{required_label}`"
-    return f"- #{status.number}: {state}; readiness labels present: {readiness_text}"
+def _resolve_contributing_url(
+    github: Repository, owner: str, repo: str
+) -> str | None:
+    """Return a link to the consuming repo's ``CONTRIBUTING.md`` when present.
+
+    The control plane runs against any repo that installs the GitHub App, so
+    we can't assume the file exists. Probe via the GitHub API and skip the
+    link when the file is absent rather than emitting a 404 in the message.
+    """
+    if decode_repo_text_file(github, "CONTRIBUTING.md") is None:
+        return None
+    branch = str(getattr(github, "default_branch", "") or "main").strip() or "main"
+    return f"https://github.com/{owner}/{repo}/blob/{branch}/CONTRIBUTING.md"
 
 
 def _format_pr_issue_state_failure_message(
     check: Mapping[str, Any],
     *,
     requester: str,
+    contributing_url: str | None,
 ) -> str:
     required_label = str(check["required_label"])
     issue_numbers = [int(number) for number in check.get("issue_numbers") or []]
-    associated_text = _format_issue_numbers(issue_numbers) if issue_numbers else "none"
-    opening = (
-        f"This PR is not linked to an issue that is marked with `{required_label}`."
-    )
     sections: list[str] = []
     normalized_requester = requester.strip().removeprefix("@")
     if normalized_requester:
         sections.append(f"@{normalized_requester}")
-    sections.extend(
-        [
-            opening,
-            "Issue-state enforcement details:",
-            f"- Associated same-repo issues checked: {associated_text}",
-            f"- Required readiness label: `{required_label}`",
-        ]
-    )
-    statuses = check.get("issue_statuses") or []
-    if statuses:
-        sections.append("Readiness check:")
-        sections.extend(
-            _format_issue_status(status, required_label=required_label)
-            for status in statuses
-        )
     sections.append(
-        f"To continue, link this PR to a same-repo issue such as `Closes #123` "
-        f"in the PR description, and make sure that issue has `{required_label}`."
+        "Every PR must be linked to a same-repo issue before Oz can review it."
     )
+    if issue_numbers:
+        issue_text = _format_issue_numbers(issue_numbers)
+        sections.append(
+            f"This PR is linked to {issue_text}, but no linked issue is marked "
+            f"`{required_label}` yet. Only repository maintainers apply that label, "
+            "so please wait for a maintainer to mark the issue. Once it is marked, "
+            "push a new commit or comment `/oz-review` to re-trigger review."
+        )
+    else:
+        sections.append(
+            "**Next step:** open or find a same-repo issue describing this change, "
+            "then link it to this PR by adding `Closes #123` to the PR description "
+            "(or using the \"Development\" sidebar on GitHub). A maintainer will "
+            f"mark the issue `{required_label}` when it is ready. Once it is marked, "
+            "comment `/oz-review` to re-trigger review."
+        )
+    if contributing_url:
+        sections.append(
+            f"See the [contribution guidelines]({contributing_url}) for the full "
+            "readiness model."
+        )
     return "\n\n".join(sections)
 
 
@@ -367,6 +370,7 @@ def enforce_pr_issue_state_for_review(
     failure_body = _format_pr_issue_state_failure_message(
         check,
         requester=requester,
+        contributing_url=_resolve_contributing_url(github, owner, repo),
     )
     _upsert_pr_issue_state_enforcement_comment(
         github,
