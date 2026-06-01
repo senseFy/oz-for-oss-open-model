@@ -268,6 +268,7 @@ class OwnershipAreasPromptSectionTest(unittest.TestCase):
                 "  owners: @api-owner, @backup-owner\n"
                 "  matches: API reference docs and generated documentation"
             ),
+            stakeholders_block="- /docs/ → @docs-owner",
             ownership_areas_loaded=True,
         )
         self.assertIn("recommended_area", prompt)
@@ -277,6 +278,8 @@ class OwnershipAreasPromptSectionTest(unittest.TestCase):
         self.assertIn("empty string `\"\"`", prompt)
         self.assertIn("`verdict` is `\"APPROVE\"`", prompt)
         self.assertIn("REQUEST_CHANGES", prompt)
+        self.assertIn("Fallback Stakeholders (from `.github/STAKEHOLDERS`)", prompt)
+        self.assertIn("- /docs/ → @docs-owner", prompt)
 
     def test_fallback_prompt_keeps_legacy_stakeholders_contract(self) -> None:
         prompt = _format_non_member_review_section(

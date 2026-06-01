@@ -788,7 +788,8 @@ def _format_non_member_review_section(
     When ``ownership_areas_loaded`` is true, instruct the agent to return
     a single ``recommended_area`` from the parsed ``warpdotdev/warp-ownership``
     list. Vercel deterministically maps that area to one owner at apply
-    time. When ownership areas are unavailable (fetch failure, empty
+    time, with ``.github/STAKEHOLDERS`` shown as the explicit fallback
+    source. When ownership areas are unavailable (fetch failure, empty
     repo), fall back to the legacy STAKEHOLDERS prompt block where the
     agent returns ``recommended_reviewers`` directly.
     """
@@ -803,10 +804,14 @@ def _format_non_member_review_section(
             - Do NOT invent area names. Do NOT return multiple names, a list, or owner handles. The workflow itself looks up the owners for the chosen area and randomly selects one.
             - If the PR touches multiple areas, pick the **primary** area whose `matches:` description best fits the bulk of the change.
             - If you cannot confidently map the PR to a single area (cross-cutting, ambiguous, or no clear match), set `recommended_area` to the empty string `""`. The workflow will fall back to a deterministic reviewer chosen from `.github/STAKEHOLDERS` rather than guessing.
+            - Use `.github/STAKEHOLDERS` only as the fallback source when you cannot confidently choose exactly one ownership area.
             - Do not call GitHub yourself to post the review or request reviewers.
 
             Ownership Areas (from `warpdotdev/warp-ownership`):
             {ownership_areas_block}
+
+            Fallback Stakeholders (from `.github/STAKEHOLDERS`):
+            {stakeholders_block}
             """
         ).strip()
     return dedent(
@@ -1077,6 +1082,12 @@ def gather_review_context(
             pr_author_login=pr_author_login,
         )
         if not pr_assignee_reviewers:
+            # Load ``.github/STAKEHOLDERS`` directly from the repository
+            # that triggered the webhook. This is shown to the agent even
+            # when ownership areas are available so the fallback path is
+            # explicit in the dispatch prompt.
+            stakeholders_entries = load_stakeholders_from_repo(github)
+            stakeholders_block = format_stakeholders_for_prompt(stakeholders_entries)
             # Prefer the canonical ``warpdotdev/warp-ownership`` mapping when
             # an ownership-repo client is wired in. The agent picks one area
             # from the parsed list; Vercel resolves the area to an owner
@@ -1106,15 +1117,9 @@ def gather_review_context(
                     pr_author_login=pr_author_login,
                     ownership_areas_block=ownership_areas_block,
                     ownership_areas_loaded=True,
+                    stakeholders_block=stakeholders_block,
                 )
             else:
-                # Load ``.github/STAKEHOLDERS`` directly from the repository
-                # that triggered the webhook. The Vercel function does not
-                # check out the consuming repo, so the workspace-backed
-                # ``load_stakeholders`` would always return an empty list and
-                # silently disable non-member reviewer selection.
-                stakeholders_entries = load_stakeholders_from_repo(github)
-                stakeholders_block = format_stakeholders_for_prompt(stakeholders_entries)
                 non_member_review_section = _format_non_member_review_section(
                     pr_author_login=pr_author_login,
                     stakeholders_block=stakeholders_block,
