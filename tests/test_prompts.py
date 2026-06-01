@@ -90,12 +90,12 @@ class FetchContextCommandPromptTest(unittest.TestCase):
             }
         )
         self.assertIn(
-            "python .agents/shared/scripts/fetch_github_context.py "
+            "python .agents/shared/scripts/implement-specs/fetch_github_context.py "
             "--repo acme/widgets pr --number 12",
             prompt,
         )
         self.assertIn(
-            "python .agents/shared/scripts/fetch_github_context.py "
+            "python .agents/shared/scripts/implement-specs/fetch_github_context.py "
             "--repo acme/widgets pr-diff --number 12",
             prompt,
         )
@@ -113,12 +113,12 @@ class FetchContextCommandPromptTest(unittest.TestCase):
             verification_skills_text="- verify-ui",
         )
         self.assertIn(
-            "python .agents/shared/scripts/fetch_github_context.py "
+            "python .agents/shared/scripts/implement-specs/fetch_github_context.py "
             "--repo acme/widgets pr --number 12",
             prompt,
         )
         self.assertIn(
-            "python .agents/shared/scripts/fetch_github_context.py "
+            "python .agents/shared/scripts/implement-specs/fetch_github_context.py "
             "--repo acme/widgets pr-diff --number 12",
             prompt,
         )

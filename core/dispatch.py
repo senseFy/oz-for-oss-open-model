@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol
 
 from oz.attachments import SdkAttachment
 from .routing import RouteDecision
+from .skills import COMMON_SKILL_NAMES
 from .state import RunState, StateStore, save_run_state
 logger = logging.getLogger(__name__)
 
@@ -54,16 +55,6 @@ WORKFLOW_ROLES: Mapping[str, str] = {
 # this skill spec.
 _DEFAULT_WORKFLOW_CODE_REPOSITORY = "warpdotdev/oz-for-oss"
 _DEFAULT_COMMON_SKILLS_REPOSITORY = "warpdotdev/common-skills"
-_COMMON_SKILL_NAMES = frozenset(
-    {
-        "check-impl-against-spec",
-        "implement-specs",
-        "review-pr",
-        "spec-driven-implementation",
-        "write-product-spec",
-        "write-tech-spec",
-    }
-)
 
 
 def _resolve_workflow_code_repo() -> str:
@@ -106,7 +97,7 @@ def cloud_skill_spec(skill_name: str, *, workflow_repo: str | None = None) -> st
         workflow_repo
         or (
             _resolve_common_skills_repo()
-            if skill_name in _COMMON_SKILL_NAMES
+            if skill_name in COMMON_SKILL_NAMES
             else _resolve_workflow_code_repo()
         )
     )

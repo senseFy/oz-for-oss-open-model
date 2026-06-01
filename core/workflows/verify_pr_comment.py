@@ -20,7 +20,7 @@ from .attachments import (
 )
 
 WORKFLOW_NAME = "verify-pr-comment"
-FETCH_CONTEXT_SCRIPT = ".agents/shared/scripts/fetch_github_context.py"
+FETCH_CONTEXT_SCRIPT = ".agents/shared/scripts/implement-specs/fetch_github_context.py"
 VERIFY_PR_SKILL = "verify-pr"
 VERIFICATION_REPORT_FILENAME = "verification_report.json"
 _VERIFICATION_SKILLS_ATTACHMENT = "verification_skills.md"

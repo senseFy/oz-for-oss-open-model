@@ -9,6 +9,7 @@ from oz_agent_sdk.types import AgentRunParams, AmbientAgentConfigParam
 from oz_agent_sdk.types.agent import RunItem
 from .attachments import SdkAttachment
 
+from core.skills import COMMON_SKILL_NAMES
 from .env import optional_env, require_env
 from .workflow_paths import workflow_code_root
 
@@ -97,16 +98,6 @@ ROLE_DEFAULT = "default"
 _KNOWN_ROLES = {ROLE_DEFAULT, ROLE_REVIEW_TRIAGE}
 _DEFAULT_WORKFLOW_CODE_REPOSITORY = "warpdotdev/oz-for-oss"
 _DEFAULT_COMMON_SKILLS_REPOSITORY = "warpdotdev/common-skills"
-_COMMON_SKILL_NAMES = frozenset(
-    {
-        "check-impl-against-spec",
-        "implement-specs",
-        "review-pr",
-        "spec-driven-implementation",
-        "write-product-spec",
-        "write-tech-spec",
-    }
-)
 
 
 def _resolve_environment_id(role: str) -> str:
@@ -218,7 +209,7 @@ def _resolve_skill_location(skill_name: str) -> tuple[str, str, Path]:
         return repo, skill_path, Path(skill_path)
 
     skill_path = _normalize_skill_path(skill_name)
-    if skill_name in _COMMON_SKILL_NAMES:
+    if skill_name in COMMON_SKILL_NAMES:
         return _resolve_common_skills_repo(), skill_path, Path(skill_path)
     workflow_repo_root = _workflow_code_root()
     workflow_repo_slug = (

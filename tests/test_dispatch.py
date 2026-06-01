@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from types import SimpleNamespace
 from typing import Any, Mapping
@@ -320,8 +321,6 @@ class CloudSkillSpecTest(unittest.TestCase):
         self.assertIsNone(calls[0]["skill"])
 
     def test_workflow_repo_env_var_override(self) -> None:
-        import os
-
         original = os.environ.get("WORKFLOW_CODE_REPOSITORY")
         try:
             os.environ["WORKFLOW_CODE_REPOSITORY"] = "forks/oz-for-oss"
@@ -336,8 +335,6 @@ class CloudSkillSpecTest(unittest.TestCase):
                 os.environ["WORKFLOW_CODE_REPOSITORY"] = original
 
     def test_common_skills_repo_env_var_override(self) -> None:
-        import os
-
         original = os.environ.get("COMMON_SKILLS_REPOSITORY")
         try:
             os.environ["COMMON_SKILLS_REPOSITORY"] = "forks/common-skills"

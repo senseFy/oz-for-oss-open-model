@@ -18,7 +18,7 @@ GRAPHQL_ROOT = f"{API_ROOT}/graphql"
 NO_SPEC_CONTEXT_MESSAGE = "No approved or repository spec context was found for this PR."
 REPO_ROOT = Path(
     (os.environ.get("OZ_REPO_ROOT") or "").strip()
-    or Path(__file__).resolve().parents[3]
+    or Path(__file__).resolve().parents[4]
 )
 
 _CLOSING_ISSUES_QUERY = (
