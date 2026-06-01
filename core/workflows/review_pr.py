@@ -302,8 +302,8 @@ def _format_pr_issue_state_failure_message(
             "**Next step:** open or find a same-repo issue describing this change, "
             "then link it to this PR by adding `Closes #123` to the PR description "
             "(or using the \"Development\" sidebar on GitHub). A maintainer will "
-            f"mark the issue `{required_label}` when it is ready and review will "
-            "run automatically."
+            f"mark the issue `{required_label}` when it is ready. Once it is marked, "
+            "comment `/oz-review` to re-trigger review."
         )
     if contributing_url:
         sections.append(
