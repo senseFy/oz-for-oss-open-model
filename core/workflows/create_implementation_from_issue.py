@@ -36,7 +36,7 @@ from oz.helpers import (
     resolve_spec_context_for_issue_via_api,
     WorkflowProgressComment,
 )
-from oz.oz_client import skill_file_path
+from oz.oz_client import skill_display_name, skill_file_path, skill_spec
 from oz.attachments import text_attachment
 from .attachments import (
     Attachment,
@@ -47,7 +47,7 @@ WORKFLOW_NAME = "create-implementation-from-issue"
 IMPLEMENT_SPECS_SKILL = "implement-specs"
 SPEC_DRIVEN_IMPLEMENTATION_SKILL = "spec-driven-implementation"
 IMPLEMENT_ISSUE_SKILL = "implement-issue"
-FETCH_CONTEXT_SCRIPT = ".agents/skills/implement-specs/scripts/fetch_github_context.py"
+FETCH_CONTEXT_SCRIPT = ".agents/shared/scripts/fetch_github_context.py"
 _SPEC_CONTEXT_ATTACHMENT = "spec_context.md"
 _CREATE_IMPLEMENTATION_ATTACHMENT_PAYLOAD_FIELDS = {
     "spec_context_text",
@@ -80,6 +80,10 @@ def build_create_implementation_prompt(
     Used by the webhook dispatch path to feed the implementation agent
     the issue/spec context and required handoff contract.
     """
+    implement_specs_skill_name = skill_display_name(implement_specs_skill_path)
+    spec_driven_implementation_skill_name = skill_display_name(
+        spec_driven_implementation_skill_path
+    )
     return dedent(
         f"""
         Create an implementation update for GitHub issue #{issue_number} in repository {owner}/{repo}.
@@ -98,9 +102,10 @@ def build_create_implementation_prompt(
         - GitHub author association is repository-scoped and is not a definitive organization-membership signal. Missing `trust=TRUSTED` labels are not negative trust classifications.
         - This script is the only supported way to read issue content during this run. Do not retrieve the issue body, comments, or triggering comment via any other mechanism.
 
-        Workflow Requirements:
-        - Use the shared implementation skills `{implement_specs_skill_path}` and `{spec_driven_implementation_skill_path}` from the workflow-code repository as the base workflow for this run.
+        Cloud Workflow Requirements:
+        - Use the shared implementation skills `{implement_specs_skill_name}` and `{spec_driven_implementation_skill_name}` as the base workflow for this run.
         - Read the Oz wrapper skill `{implement_issue_skill_path}` and apply its instructions for `spec_context.md`, the trusted GitHub context fetch script, `implementation_summary.md`, and `pr_description.md`.
+        - You are running in a cloud environment, so the caller cannot read your local diff.
         - Work on branch `{target_branch}`.
         - If that branch already exists, fetch it and continue from it. Otherwise create it from `{default_branch}`.
         - Align the implementation with the plan context above when present.
@@ -267,8 +272,8 @@ def gather_create_implementation_context(
     )
     coauthor_directives = coauthor_prompt_lines(coauthor_line)
 
-    implement_specs_skill_path = skill_file_path(IMPLEMENT_SPECS_SKILL)
-    spec_driven_implementation_skill_path = skill_file_path(
+    implement_specs_skill_path = skill_spec(IMPLEMENT_SPECS_SKILL)
+    spec_driven_implementation_skill_path = skill_spec(
         SPEC_DRIVEN_IMPLEMENTATION_SKILL
     )
     implement_issue_skill_path = skill_file_path(IMPLEMENT_ISSUE_SKILL)

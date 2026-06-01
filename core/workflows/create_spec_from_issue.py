@@ -37,7 +37,7 @@ from oz.helpers import (
     triggering_comment_prompt_text,
     WorkflowProgressComment,
 )
-from oz.oz_client import skill_file_path
+from oz.oz_client import skill_display_name, skill_file_path, skill_spec
 from oz.attachments import text_attachment
 from .attachments import (
     Attachment,
@@ -134,6 +134,11 @@ def build_create_spec_prompt(
     Used by the webhook dispatch path to feed the spec-writing agent
     the issue context and required handoff contract.
     """
+    spec_driven_implementation_skill_name = skill_display_name(
+        spec_driven_implementation_skill_path
+    )
+    write_product_spec_skill_name = skill_display_name(write_product_spec_skill_path)
+    write_tech_spec_skill_name = skill_display_name(write_tech_spec_skill_path)
     return dedent(
         f"""
         Create product and tech specs for GitHub issue #{issue_number} in repository {owner}/{repo}.
@@ -154,9 +159,9 @@ def build_create_spec_prompt(
 
         Workflow Requirements:
         - Start from the repository default branch `{default_branch}`.
-        - Use the shared spec-first skill `{spec_driven_implementation_skill_path}` from the workflow-code repository as the base workflow for this run.
-        - First, read the shared product-spec skill `{write_product_spec_skill_path}`, then read the Oz wrapper skill `{create_product_spec_skill_path}`, and create a product spec at `specs/GH{issue_number}/product.md`.
-        - Then, read the shared tech-spec skill `{write_tech_spec_skill_path}`, then read the Oz wrapper skill `{create_tech_spec_skill_path}`, and create a tech spec at `specs/GH{issue_number}/tech.md`.
+        - Use the shared spec-first skill `{spec_driven_implementation_skill_name}` as the base workflow for this run.
+        - First, read the shared product-spec skill `{write_product_spec_skill_name}`, then read the Oz wrapper skill `{create_product_spec_skill_path}`, and create a product spec at `specs/GH{issue_number}/product.md`.
+        - Then, read the shared tech-spec skill `{write_tech_spec_skill_name}`, then read the Oz wrapper skill `{create_tech_spec_skill_path}`, and create a tech spec at `specs/GH{issue_number}/tech.md`.
         - If you produce spec changes, write `pr-metadata.json` at the repository root containing a JSON object with these required fields:
           - `branch_name`: the branch you pushed to (use `{branch_name}` exactly).
           - `pr_title`: a conventional-commit-style PR title for the spec changes (e.g. `spec: {issue_title}`).
@@ -297,11 +302,11 @@ def gather_create_spec_context(
     )
     coauthor_directives = coauthor_prompt_lines(coauthor_line)
 
-    spec_driven_implementation_skill_path = skill_file_path(
+    spec_driven_implementation_skill_path = skill_spec(
         SPEC_DRIVEN_IMPLEMENTATION_SKILL
     )
-    write_product_spec_skill_path = skill_file_path(WRITE_PRODUCT_SPEC_SKILL)
-    write_tech_spec_skill_path = skill_file_path(WRITE_TECH_SPEC_SKILL)
+    write_product_spec_skill_path = skill_spec(WRITE_PRODUCT_SPEC_SKILL)
+    write_tech_spec_skill_path = skill_spec(WRITE_TECH_SPEC_SKILL)
     create_product_spec_skill_path = skill_file_path(CREATE_PRODUCT_SPEC_SKILL)
     create_tech_spec_skill_path = skill_file_path(CREATE_TECH_SPEC_SKILL)
 

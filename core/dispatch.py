@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol
 
 from oz.attachments import SdkAttachment
 from .routing import RouteDecision
+from .skills import COMMON_SKILL_NAMES
 from .state import RunState, StateStore, save_run_state
 logger = logging.getLogger(__name__)
 
@@ -38,18 +39,22 @@ WORKFLOW_ROLES: Mapping[str, str] = {
     "review-pull-request": _REVIEW_TRIAGE_ROLE,
 }
 
-# Default workflow-code repo for skill resolution. Each cloud agent run
-# tells the Oz API where to fetch its core skill from via a fully
-# qualified ``<owner>/<repo>:<path>`` spec. The control plane lives in
-# ``warpdotdev/oz-for-oss`` so its bundled skills (``review-pr``,
-# ``implement-issue``, ``verify-pr``, ``triage-issue``, etc.) are
-# resolvable against that repo by default. Forks can override the
-# default by setting ``WORKFLOW_CODE_REPOSITORY=owner/repo`` in the
-# Vercel environment so their fork's bundled skills are used instead.
+# Default repos for skill resolution. Each cloud agent run tells the Oz
+# API where to fetch its core skill from via a fully qualified
+# ``<owner>/<repo>:<path>`` spec. Oz-specific workflow skills
+# (``implement-issue``, ``verify-pr``, ``triage-issue``, etc.) remain in
+# the workflow-code repository. Generic base skills (``review-pr``,
+# ``check-impl-against-spec``, ``implement-specs``, and the
+# spec-writing skills) come from the configured common-skills
+# repository.
+# Forks can override the workflow-code default by setting
+# ``WORKFLOW_CODE_REPOSITORY=owner/repo`` in the Vercel environment so
+# their fork's bundled Oz-specific skills are used instead.
 # Repo-local override skills (e.g. ``review-pr-local``) live in the
 # consuming repo and are referenced inside the prompt body, not via
 # this skill spec.
 _DEFAULT_WORKFLOW_CODE_REPOSITORY = "warpdotdev/oz-for-oss"
+_DEFAULT_COMMON_SKILLS_REPOSITORY = "warpdotdev/common-skills"
 
 
 def _resolve_workflow_code_repo() -> str:
@@ -60,14 +65,22 @@ def _resolve_workflow_code_repo() -> str:
     return _DEFAULT_WORKFLOW_CODE_REPOSITORY
 
 
+def _resolve_common_skills_repo() -> str:
+    """Return the configured common-skills repo slug."""
+    raw = os.environ.get("COMMON_SKILLS_REPOSITORY", "").strip()
+    if raw and "/" in raw:
+        return raw
+    return _DEFAULT_COMMON_SKILLS_REPOSITORY
+
+
 def cloud_skill_spec(skill_name: str, *, workflow_repo: str | None = None) -> str:
     """Format *skill_name* into the ``<repo>:<path>`` spec the Oz API requires.
 
     Pass-through when *skill_name* already contains a ``:`` separator.
     Otherwise: normalize the bare name into
-    ``.agents/skills/<name>/SKILL.md`` and prepend the workflow-code
-    repo (``WORKFLOW_CODE_REPOSITORY`` env override or
-    ``warpdotdev/oz-for-oss`` by default).
+    ``.agents/skills/<name>/SKILL.md`` and prepend either the common-skills
+    repo for shared base skills or the workflow-code repo for Oz-specific
+    skills.
 
     The Oz API rejects bare skill names with
     ``invalid skill_spec format: missing ':' separator``; this helper
@@ -80,7 +93,14 @@ def cloud_skill_spec(skill_name: str, *, workflow_repo: str | None = None) -> st
         return skill_name
     if ":" in skill_name:
         return skill_name
-    repo = workflow_repo or _resolve_workflow_code_repo()
+    repo = (
+        workflow_repo
+        or (
+            _resolve_common_skills_repo()
+            if skill_name in COMMON_SKILL_NAMES
+            else _resolve_workflow_code_repo()
+        )
+    )
     if skill_name.endswith("SKILL.md"):
         skill_path = skill_name
     else:

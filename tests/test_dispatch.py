@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from types import SimpleNamespace
 from typing import Any, Mapping
@@ -87,11 +88,11 @@ class DispatchRunTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         invocation = calls[0]
         self.assertEqual(invocation["title"], "PR review #1")
-        # Bare ``review-pr`` is resolved into the fully qualified spec
+        # Bare ``review-pr`` is resolved into the shared common-skills spec
         # the Oz API expects before reaching the runner.
         self.assertEqual(
             invocation["skill"],
-            "warpdotdev/oz-for-oss:.agents/skills/review-pr/SKILL.md",
+            "warpdotdev/common-skills:.agents/skills/review-pr/SKILL.md",
         )
         self.assertTrue(invocation["team"])
         self.assertIsNone(invocation["attachments"])
@@ -261,10 +262,22 @@ class EvaluateRouteTest(unittest.TestCase):
 
 
 class CloudSkillSpecTest(unittest.TestCase):
-    def test_bare_skill_name_uses_default_workflow_repo(self) -> None:
+    def test_bare_local_skill_name_uses_default_workflow_repo(self) -> None:
+        spec = cloud_skill_spec("implement-issue")
+        self.assertEqual(
+            spec, "warpdotdev/oz-for-oss:.agents/skills/implement-issue/SKILL.md"
+        )
+
+    def test_bare_common_skill_name_uses_common_skills_repo(self) -> None:
         spec = cloud_skill_spec("review-pr")
         self.assertEqual(
-            spec, "warpdotdev/oz-for-oss:.agents/skills/review-pr/SKILL.md"
+            spec, "warpdotdev/common-skills:.agents/skills/review-pr/SKILL.md"
+        )
+
+        spec = cloud_skill_spec("check-impl-against-spec")
+        self.assertEqual(
+            spec,
+            "warpdotdev/common-skills:.agents/skills/check-impl-against-spec/SKILL.md",
         )
 
     def test_passes_through_already_qualified_spec(self) -> None:
@@ -308,20 +321,32 @@ class CloudSkillSpecTest(unittest.TestCase):
         self.assertIsNone(calls[0]["skill"])
 
     def test_workflow_repo_env_var_override(self) -> None:
-        import os
-
         original = os.environ.get("WORKFLOW_CODE_REPOSITORY")
         try:
             os.environ["WORKFLOW_CODE_REPOSITORY"] = "forks/oz-for-oss"
-            spec = cloud_skill_spec("review-pr")
+            spec = cloud_skill_spec("implement-issue")
             self.assertEqual(
-                spec, "forks/oz-for-oss:.agents/skills/review-pr/SKILL.md"
+                spec, "forks/oz-for-oss:.agents/skills/implement-issue/SKILL.md"
             )
         finally:
             if original is None:
                 os.environ.pop("WORKFLOW_CODE_REPOSITORY", None)
             else:
                 os.environ["WORKFLOW_CODE_REPOSITORY"] = original
+
+    def test_common_skills_repo_env_var_override(self) -> None:
+        original = os.environ.get("COMMON_SKILLS_REPOSITORY")
+        try:
+            os.environ["COMMON_SKILLS_REPOSITORY"] = "forks/common-skills"
+            spec = cloud_skill_spec("review-pr")
+            self.assertEqual(
+                spec, "forks/common-skills:.agents/skills/review-pr/SKILL.md"
+            )
+        finally:
+            if original is None:
+                os.environ.pop("COMMON_SKILLS_REPOSITORY", None)
+            else:
+                os.environ["COMMON_SKILLS_REPOSITORY"] = original
 
 
 if __name__ == "__main__":

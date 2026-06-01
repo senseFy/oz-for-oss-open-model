@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 
 from . import conftest  # noqa: F401
 
@@ -188,53 +183,6 @@ class ReviewValidationTest(unittest.TestCase):
         )
         self.assertEqual(result.errors, [])
         self.assertEqual(len(result.comments), 1)
-
-    def test_cli_validator_fails_for_invalid_inline_location(self) -> None:
-        script = (
-            Path(__file__).resolve().parent.parent
-            / ".agents"
-            / "skills"
-            / "review-pr"
-            / "scripts"
-            / "validate_review_json.py"
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            diff_path = tmp_path / "pr_diff.txt"
-            review_path = tmp_path / "review.json"
-            diff_path.write_text(ANNOTATED_DIFF, encoding="utf-8")
-            review_path.write_text(
-                json.dumps(
-                    {
-                        "verdict": "REJECT",
-                        "body": "bad",
-                        "comments": [
-                            {
-                                "path": "src/example.py",
-                                "line": 99,
-                                "side": "RIGHT",
-                                "body": "⚠️ [IMPORTANT] Invalid.",
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    str(script),
-                    "--review-json",
-                    str(review_path),
-                    "--diff",
-                    str(diff_path),
-                ],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("not commentable", completed.stderr)
 
 
 if __name__ == "__main__":

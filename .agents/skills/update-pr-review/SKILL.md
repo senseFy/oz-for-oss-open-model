@@ -5,7 +5,7 @@ description: Update the repo-local review-pr-local and review-spec-local compani
 
 # Update PR Review
 
-Use this skill to improve the repo-local review companions `.agents/skills/review-pr-local/SKILL.md` and `.agents/skills/review-spec-local/SKILL.md` from real reviewer feedback. The core skills at `.agents/skills/review-pr/SKILL.md` and `.agents/skills/review-spec/SKILL.md` are the cross-repo contract and are read-only from this loop.
+Use this skill to improve the repo-local review companions `.agents/skills/review-pr-local/SKILL.md` and `.agents/skills/review-spec-local/SKILL.md` from real reviewer feedback. The shared `review-pr` skill and the repo-local core `.agents/skills/review-spec/SKILL.md` are the cross-repo contracts and are read-only from this loop.
 
 The repository uses two separate review skills: `review-pr` for code pull requests and `review-spec` for spec-only pull requests (PRs where every changed file lives under `specs/`). Feedback from each category of PR should be routed to the corresponding repo-local companion.
 
@@ -18,7 +18,7 @@ This self-improvement loop may only write to:
 
 It must NOT touch:
 
-- `.agents/skills/review-pr/SKILL.md` (the core contract)
+- the shared `review-pr` skill
 - `.agents/skills/review-spec/SKILL.md` (the core contract)
 - any file under `.github/issue-triage/` (that taxonomy is owned by the `update-triage` loop)
 - any other core skill
@@ -65,7 +65,7 @@ Each pull request in the output includes a `review_type` field that is either `"
 - Update each companion skill independently with the smallest rule change that explains the feedback for that category.
 - If feedback for one category is empty, skip that companion.
 
-5. Keep the core review contract stable — never edit `review-pr/SKILL.md` or `review-spec/SKILL.md`. Only the `-local` companions evolve from feedback.
+5. Keep the core review contract stable — never edit the shared `review-pr` skill or `.agents/skills/review-spec/SKILL.md`. Only the `-local` companions evolve from feedback.
 
 ## Evidence Rules
 

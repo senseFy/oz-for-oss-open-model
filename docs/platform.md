@@ -4,7 +4,7 @@ The repository is organized around a small set of skill-backed agent roles, all 
 
 The behavior lives in three layers:
 
-- skills in [`../.agents/skills/`](../.agents/skills/)
+- Oz-specific skills in [`../.agents/skills/`](../.agents/skills/) plus shared base skills resolved by name
 - workflow-specific context, prompt, and apply helpers in [`../core/workflows/`](../core/workflows/)
 - shared Oz and GitHub helpers in [`../core/oz/`](../core/oz/)
 
@@ -30,15 +30,15 @@ The triage role uses [`triage-issue`](../.agents/skills/triage-issue/SKILL.md), 
 
 ### Spec writing
 
-The spec-writing role uses [`spec-driven-implementation`](../.agents/skills/spec-driven-implementation/SKILL.md), [`create-product-spec`](../.agents/skills/create-product-spec/SKILL.md), [`create-tech-spec`](../.agents/skills/create-tech-spec/SKILL.md), [`write-product-spec`](../.agents/skills/write-product-spec/SKILL.md), and [`write-tech-spec`](../.agents/skills/write-tech-spec/SKILL.md). The durable outputs are product and tech specs under [`../specs/`](../specs/).
+The spec-writing role uses shared `spec-driven-implementation`, `write-product-spec`, and `write-tech-spec` skills, plus the Oz wrapper skills [`create-product-spec`](../.agents/skills/create-product-spec/SKILL.md) and [`create-tech-spec`](../.agents/skills/create-tech-spec/SKILL.md). The durable outputs are product and tech specs under [`../specs/`](../specs/).
 
 ### Implementation
 
-The implementation role uses [`implement-issue`](../.agents/skills/implement-issue/SKILL.md), [`implement-specs`](../.agents/skills/implement-specs/SKILL.md), and [`spec-driven-implementation`](../.agents/skills/spec-driven-implementation/SKILL.md). It prefers approved spec context when available and refuses unapproved spec PRs when the workflow detects them.
+The implementation role uses the Oz wrapper [`implement-issue`](../.agents/skills/implement-issue/SKILL.md) plus shared `implement-specs` and `spec-driven-implementation` skills. It prefers approved spec context when available and refuses unapproved spec PRs when the workflow detects them.
 
 ### Review and verification
 
-The review role uses [`review-pr`](../.agents/skills/review-pr/SKILL.md), [`review-spec`](../.agents/skills/review-spec/SKILL.md), and spec consistency checks via [`check-impl-against-spec`](../.agents/skills/check-impl-against-spec/SKILL.md). PR review results are uploaded as `review.json` and applied by `core/workflows/review_pr.py`.
+The review role uses the shared `review-pr` and `check-impl-against-spec` skills plus the Oz-specific [`review-spec`](../.agents/skills/review-spec/SKILL.md). PR review results are uploaded as `review.json` and applied by `core/workflows/review_pr.py`.
 
 The verification role uses [`verify-pr`](../.agents/skills/verify-pr/SKILL.md) and runs from the `/oz-verify` slash command on PR comments.
 

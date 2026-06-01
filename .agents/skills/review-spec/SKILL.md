@@ -128,11 +128,11 @@ Before finishing:
 
 - Fix invalid JSON if validation fails.
 - Confirm line numbers match the annotated diff.
-- Run the bundled validator against the exact annotated diff you reviewed:
+- Run the validator bundled with the shared `review-pr` skill against the exact annotated diff you reviewed. If common skills are installed at the repository root, this is usually:
     ```
     python3 .agents/skills/review-pr/scripts/validate_review_json.py --review-json review.json --diff pr_diff.txt
     ```
-  If the script reports any invalid comments, fix `review.json` and rerun it. Do not finish until this validator passes. If the script path is not present at that exact location, locate `validate_review_json.py` under the packaged sibling `review-pr` skill directory and run that copy with the same arguments.
+  If the script reports any invalid comments, fix `review.json` and rerun it. Do not upload `review.json` until this validator passes. If the script path is not present at that exact location, locate `validate_review_json.py` under the packaged shared `review-pr` skill directory and run that copy with the same arguments.
 - Do not run `gh pr review`, `gh pr comment`, `gh api`, or any other command that posts to GitHub.
 
 Your only output is the final `review.json`.

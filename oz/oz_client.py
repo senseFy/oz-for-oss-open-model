@@ -9,6 +9,7 @@ from oz_agent_sdk.types import AgentRunParams, AmbientAgentConfigParam
 from oz_agent_sdk.types.agent import RunItem
 from .attachments import SdkAttachment
 
+from core.skills import COMMON_SKILL_NAMES
 from .env import optional_env, require_env
 from .workflow_paths import workflow_code_root
 
@@ -96,6 +97,7 @@ ROLE_REVIEW_TRIAGE = "review-triage"
 ROLE_DEFAULT = "default"
 _KNOWN_ROLES = {ROLE_DEFAULT, ROLE_REVIEW_TRIAGE}
 _DEFAULT_WORKFLOW_CODE_REPOSITORY = "warpdotdev/oz-for-oss"
+_DEFAULT_COMMON_SKILLS_REPOSITORY = "warpdotdev/common-skills"
 
 
 def _resolve_environment_id(role: str) -> str:
@@ -187,6 +189,14 @@ def _normalize_skill_path(skill_name: str) -> str:
     return f".agents/skills/{skill_name}/SKILL.md"
 
 
+def _resolve_common_skills_repo() -> str:
+    """Return the configured common-skills repo slug."""
+    raw = optional_env("COMMON_SKILLS_REPOSITORY")
+    if raw and "/" in raw:
+        return raw
+    return _DEFAULT_COMMON_SKILLS_REPOSITORY
+
+
 def _workflow_code_root() -> Path:
     """Return the checked-out workflow code root when available."""
     return workflow_code_root(__file__)
@@ -199,6 +209,8 @@ def _resolve_skill_location(skill_name: str) -> tuple[str, str, Path]:
         return repo, skill_path, Path(skill_path)
 
     skill_path = _normalize_skill_path(skill_name)
+    if skill_name in COMMON_SKILL_NAMES:
+        return _resolve_common_skills_repo(), skill_path, Path(skill_path)
     workflow_repo_root = _workflow_code_root()
     workflow_repo_slug = (
         optional_env("WORKFLOW_CODE_REPOSITORY")
@@ -218,6 +230,16 @@ def skill_file_path(skill_name: str) -> str:
     if ":" in skill_name:
         return skill_path
     return skill_path
+
+
+def skill_display_name(skill_ref: str) -> str:
+    """Return a prompt-safe bare skill name from a name, path, or qualified spec."""
+    normalized = str(skill_ref or "").strip()
+    if ":" in normalized:
+        _repo_slug, normalized = normalized.split(":", 1)
+    if normalized.endswith("SKILL.md"):
+        return Path(normalized).parent.name
+    return normalized.strip("/")
 
 
 def skill_spec(skill_name: str) -> str:
