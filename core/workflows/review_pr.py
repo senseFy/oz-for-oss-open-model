@@ -16,6 +16,7 @@ from oz.helpers import (
     ENFORCEMENT_COMMENT_RUN_ID,
     get_field,
     get_label_name,
+    get_login,
     is_automation_user,
     is_spec_only_pr,
     ORG_MEMBER_ASSOCIATIONS,
@@ -500,6 +501,27 @@ def _first_eligible_owner(
     return None
 
 
+def _reviewer_from_pr_assignee(
+    pr: Any,
+    *,
+    pr_author_login: str,
+) -> list[str]:
+    for assignee in get_field(pr, "assignees", []) or []:
+        if is_automation_user(assignee):
+            continue
+        login = _normalize_reviewer_login(
+            get_login(assignee),
+            pr_author_login=pr_author_login,
+        )
+        if login:
+            logger.info(
+                "review-pr: using existing PR assignee %s as reviewer",
+                login,
+            )
+            return [login]
+    return []
+
+
 def _deterministic_reviewer_from_stakeholders(
     entries: list[dict[str, Any]],
     *,
@@ -893,7 +915,6 @@ def _format_pr_diff(files: list[File]) -> str:
     return "\n\n".join(sections).rstrip() + "\n"
 
 
-
 class ReviewContext(TypedDict):
     """Serializable context for a Vercel-dispatched PR review run.
 
@@ -928,6 +949,7 @@ class ReviewContext(TypedDict):
     pr_author_login: str
     stakeholder_logins: list[str]
     stakeholder_entries: list[dict[str, Any]]
+    pr_assignee_reviewers: list[str]
     # Ownership-areas snapshot taken at dispatch time. ``ownership_areas`` is
     # a JSON-serializable list of ``{name, owners, matches}`` dicts derived
     # from ``warpdotdev/warp-ownership/ownership-areas/*.md`` via
@@ -1046,52 +1068,58 @@ def gather_review_context(
     )
     non_member_review_section = ""
     stakeholders_entries: list[dict[str, Any]] = []
+    pr_assignee_reviewers: list[str] = []
     ownership_areas_serialized: list[dict[str, Any]] = []
     ownership_areas_loaded = False
     if is_non_member:
-        # Prefer the canonical ``warpdotdev/warp-ownership`` mapping when
-        # an ownership-repo client is wired in. The agent picks one area
-        # from the parsed list; Vercel resolves the area to an owner
-        # deterministically at apply time.
-        ownership_areas: list[OwnershipArea] = []
-        if ownership_repo_handle is not None:
-            try:
-                ownership_areas = load_ownership_areas_from_repo(
-                    ownership_repo_handle
+        pr_assignee_reviewers = _reviewer_from_pr_assignee(
+            pr,
+            pr_author_login=pr_author_login,
+        )
+        if not pr_assignee_reviewers:
+            # Prefer the canonical ``warpdotdev/warp-ownership`` mapping when
+            # an ownership-repo client is wired in. The agent picks one area
+            # from the parsed list; Vercel resolves the area to an owner
+            # deterministically at apply time.
+            ownership_areas: list[OwnershipArea] = []
+            if ownership_repo_handle is not None:
+                try:
+                    ownership_areas = load_ownership_areas_from_repo(
+                        ownership_repo_handle
+                    )
+                except Exception:
+                    # Fail open: any unexpected error pulling warp-ownership
+                    # falls through to the STAKEHOLDERS prompt block below.
+                    logger.exception(
+                        "review-pr: failed to load ownership areas; falling back to STAKEHOLDERS"
+                    )
+                    ownership_areas = []
+            if ownership_areas:
+                ownership_areas_loaded = True
+                ownership_areas_serialized = [
+                    area.to_dict() for area in ownership_areas
+                ]
+                ownership_areas_block = format_ownership_areas_for_prompt(
+                    ownership_areas
                 )
-            except Exception:
-                # Fail open: any unexpected error pulling warp-ownership
-                # falls through to the STAKEHOLDERS prompt block below.
-                logger.exception(
-                    "review-pr: failed to load ownership areas; falling back to STAKEHOLDERS"
+                non_member_review_section = _format_non_member_review_section(
+                    pr_author_login=pr_author_login,
+                    ownership_areas_block=ownership_areas_block,
+                    ownership_areas_loaded=True,
                 )
-                ownership_areas = []
-        if ownership_areas:
-            ownership_areas_loaded = True
-            ownership_areas_serialized = [
-                area.to_dict() for area in ownership_areas
-            ]
-            ownership_areas_block = format_ownership_areas_for_prompt(
-                ownership_areas
-            )
-            non_member_review_section = _format_non_member_review_section(
-                pr_author_login=pr_author_login,
-                ownership_areas_block=ownership_areas_block,
-                ownership_areas_loaded=True,
-            )
-        else:
-            # Load ``.github/STAKEHOLDERS`` directly from the repository
-            # that triggered the webhook. The Vercel function does not
-            # check out the consuming repo, so the workspace-backed
-            # ``load_stakeholders`` would always return an empty list and
-            # silently disable non-member reviewer selection.
-            stakeholders_entries = load_stakeholders_from_repo(github)
-            stakeholders_block = format_stakeholders_for_prompt(stakeholders_entries)
-            non_member_review_section = _format_non_member_review_section(
-                pr_author_login=pr_author_login,
-                stakeholders_block=stakeholders_block,
-                ownership_areas_loaded=False,
-            )
+            else:
+                # Load ``.github/STAKEHOLDERS`` directly from the repository
+                # that triggered the webhook. The Vercel function does not
+                # check out the consuming repo, so the workspace-backed
+                # ``load_stakeholders`` would always return an empty list and
+                # silently disable non-member reviewer selection.
+                stakeholders_entries = load_stakeholders_from_repo(github)
+                stakeholders_block = format_stakeholders_for_prompt(stakeholders_entries)
+                non_member_review_section = _format_non_member_review_section(
+                    pr_author_login=pr_author_login,
+                    stakeholders_block=stakeholders_block,
+                    ownership_areas_loaded=False,
+                )
     pr_description_text = _format_pr_description(
         pr_number=pr_number,
         pr_title=str(pr.title or ""),
@@ -1140,6 +1168,7 @@ def gather_review_context(
         pr_author_login=pr_author_login,
         stakeholder_logins=sorted(_stakeholder_logins(stakeholders_entries)),
         stakeholder_entries=stakeholders_entries,
+        pr_assignee_reviewers=pr_assignee_reviewers,
         ownership_areas=ownership_areas_serialized,
         ownership_areas_loaded=bool(ownership_areas_loaded),
         progress_comment_id=int(progress_comment_id or 0),
@@ -1260,6 +1289,7 @@ def build_review_prompt_for_dispatch(context: Mapping[str, Any]) -> str:
         prompt = prompt + "\n\n" + non_member_section
     return prompt
 
+
 def apply_review_result(
     github: Repository,
     *,
@@ -1328,26 +1358,31 @@ def apply_review_result(
         else "COMMENT"
     )
     if is_non_member and verdict == _VERDICT_APPROVE:
-        ownership_areas = [
-            OwnershipArea(
-                name=str(entry.get("name") or ""),
-                owners=[
-                    str(owner_login)
-                    for owner_login in (entry.get("owners") or [])
-                    if isinstance(owner_login, str) and owner_login.strip()
-                ],
-                matches=str(entry.get("matches") or ""),
-            )
-            for entry in (context.get("ownership_areas") or [])
-            if isinstance(entry, dict) and entry.get("name")
-        ]
-        recommended_reviewers = _resolve_recommended_reviewers(
-            result,
-            ownership_areas=ownership_areas,
-            repo_handle=github,
+        recommended_reviewers = _reviewer_from_pr_assignee(
+            pr,
             pr_author_login=pr_author_login,
-            changed_paths=list(diff_line_map),
         )
+        if not recommended_reviewers:
+            ownership_areas = [
+                OwnershipArea(
+                    name=str(entry.get("name") or ""),
+                    owners=[
+                        str(owner_login)
+                        for owner_login in (entry.get("owners") or [])
+                        if isinstance(owner_login, str) and owner_login.strip()
+                    ],
+                    matches=str(entry.get("matches") or ""),
+                )
+                for entry in (context.get("ownership_areas") or [])
+                if isinstance(entry, dict) and entry.get("name")
+            ]
+            recommended_reviewers = _resolve_recommended_reviewers(
+                result,
+                ownership_areas=ownership_areas,
+                repo_handle=github,
+                pr_author_login=pr_author_login,
+                changed_paths=list(diff_line_map),
+            )
     else:
         recommended_reviewers = []
     if verdict == _VERDICT_APPROVE:

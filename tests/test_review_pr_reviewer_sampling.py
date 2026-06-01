@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from . import conftest  # noqa: F401
@@ -16,10 +17,12 @@ from workflows.review_pr import (  # type: ignore[import-not-found]
     _is_team_slug,
     _parse_verdict,
     _resolve_recommended_reviewers,
+    _reviewer_from_pr_assignee,
     _split_reviewers,
     _stakeholder_pattern_matches,
     _team_slug_only,
     apply_review_result,
+    gather_review_context,
     review_payload_subset,
     RETRIGGER_HINT,
 )
@@ -197,6 +200,63 @@ class OwnershipAreasResolveReviewerTest(unittest.TestCase):
             )
         self.assertEqual(reviewers, [])
         load.assert_called_once_with(repo_handle)
+
+
+class PrAssigneeReviewerTest(unittest.TestCase):
+    def test_uses_first_eligible_assignee(self) -> None:
+        pr = SimpleNamespace(
+            assignees=[
+                SimpleNamespace(login="contributor"),
+                SimpleNamespace(login="assigned-owner"),
+            ]
+        )
+        self.assertEqual(
+            _reviewer_from_pr_assignee(pr, pr_author_login="contributor"),
+            ["assigned-owner"],
+        )
+
+    def test_gather_context_skips_ownership_lookup_when_assignee_exists(self) -> None:
+        pr = MagicMock()
+        pr.get_files.return_value = [
+            SimpleNamespace(
+                filename="src/app.py",
+                patch="+print('hi')",
+                status="modified",
+            )
+        ]
+        pr.user.login = "contributor"
+        pr.user.type = "User"
+        pr.author_association = "CONTRIBUTOR"
+        pr.assignees = [SimpleNamespace(login="assigned-owner")]
+        pr.title = "feat: add app"
+        pr.body = ""
+        pr.base.ref = "main"
+        pr.head.ref = "feature"
+        github = MagicMock()
+        github.get_pull.return_value = pr
+
+        with (
+            patch("workflows.review_pr.resolve_issue_number_for_pr", return_value=None),
+            patch("workflows.review_pr.repo_local_skill_path_for_dispatch", return_value=None),
+            patch("workflows.review_pr.resolve_spec_context_for_pr_via_api", return_value={}),
+            patch("workflows.review_pr._build_diff_maps", return_value=({}, {})),
+            patch("workflows.review_pr.load_ownership_areas_from_repo") as load_ownership,
+        ):
+            context = gather_review_context(
+                github,
+                owner="acme",
+                repo="widgets",
+                pr_number=7,
+                trigger_source="pull_request",
+                requester="alice",
+                workspace_path=MagicMock(),
+                ownership_repo_handle=MagicMock(),
+            )
+
+        self.assertEqual(context["pr_assignee_reviewers"], ["assigned-owner"])
+        self.assertFalse(context["ownership_areas_loaded"])
+        self.assertEqual(context["non_member_review_section"], "")
+        load_ownership.assert_not_called()
 
 
 class OwnershipAreasPromptSectionTest(unittest.TestCase):
@@ -426,6 +486,37 @@ class ApplyReviewResultVerdictTest(unittest.TestCase):
         pr.create_review.assert_called_once()
         self.assertEqual(pr.create_review.call_args.kwargs["event"], "COMMENT")
         pr.create_review_request.assert_called_once_with(reviewers=["api-owner"])
+
+    def test_approve_non_member_pr_prefers_existing_assignee(self) -> None:
+        pr = MagicMock()
+        pr.assignees = [SimpleNamespace(login="assigned-owner")]
+        github = self._make_github(pr)
+        progress = MagicMock()
+        with patch("workflows.review_pr._resolve_recommended_reviewers") as resolve:
+            apply_review_result(
+                github,
+                context=self._make_context(
+                    is_non_member=True,
+                    ownership_areas=[
+                        {
+                            "name": "Docs API",
+                            "owners": ["api-owner"],
+                            "matches": "API reference docs and generated documentation",
+                        }
+                    ],
+                ),
+                run=MagicMock(),
+                result={
+                    "verdict": "APPROVE",
+                    "summary": "Looks good",
+                    "comments": [],
+                    "recommended_area": "Docs API",
+                },
+                progress=progress,
+            )
+        resolve.assert_not_called()
+        pr.create_review.assert_called_once()
+        pr.create_review_request.assert_called_once_with(reviewers=["assigned-owner"])
 
     def test_approve_member_pr_uses_comment_event_without_reviewer_request(self) -> None:
         pr = MagicMock()
