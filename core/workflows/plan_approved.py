@@ -209,6 +209,20 @@ def apply_plan_approved_sync(
                 issue_number,
             )
 
+    # Promote the issue into the implementation phase. ``add_to_labels``
+    # is idempotent server-side, so it runs even when the label is
+    # already present; ``ready_to_implement_added`` records a fresh add.
+    ready_to_implement_added = READY_TO_IMPLEMENT_LABEL not in label_names
+    try:
+        issue_handle.add_to_labels(READY_TO_IMPLEMENT_LABEL)
+    except Exception:
+        logger.exception(
+            "Failed to add %r label to issue #%s",
+            READY_TO_IMPLEMENT_LABEL,
+            issue_number,
+        )
+ 
+
     # Decide whether implementation should be triggered. The label
     # set after the removal above (``ready-to-spec`` may have just
     # been stripped) determines whether the issue is ready for
@@ -239,6 +253,7 @@ def apply_plan_approved_sync(
         "linked_issue_number": int(issue_number),
         "comment_posted": comment_posted,
         "label_removed": label_removed,
+        "ready_to_implement_added": ready_to_implement_added,
         "implementation_triggered": False,
     }
 

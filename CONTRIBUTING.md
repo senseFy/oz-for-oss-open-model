@@ -36,7 +36,17 @@ In practice, that means:
 - wait until the Warp team marks the issue `ready-to-implement`
 - open a PR with the implementation once the issue is in that state
 
+When a spec PR exists for the issue, the spec must be `plan-approved` before implementation starts, and the implementation PR should branch off the spec PR's head branch so it builds on the approved spec.
+
 For smaller changes, we can go straight from issue to code. For larger changes, we usually expect the spec step first and then implementation on that same PR or a linked follow-up PR.
+
+### How approval flows through labels
+
+`plan-approved` is the label an internal reviewer applies to a spec PR once the product and technical approach are accepted. Applying it automatically removes `ready-to-spec` and adds `ready-to-implement` on the linked issue, so the issue advances from speccing to implementation without manual relabeling.
+
+### Maintainer-driven Oz triggers
+
+Once `oz-agent` is assigned to an issue, applying `ready-to-spec` or `ready-to-implement` makes Oz draft the matching spec or implementation PR. Without an `oz-agent` assignee, those same labels post a one-shot community-contribution announcement instead. An `@oz-agent` mention on an issue is the equivalent contributor-driven trigger.
 
 ## Who decides readiness
 
