@@ -51,9 +51,11 @@ _MATCHES_BULLET_RE = re.compile(
     r"^\s*[-*]\s*\*\*Matches\*\*:\s*(?P<value>.*?)\s*$",
     re.IGNORECASE,
 )
-# Owner handles appear as ``@login`` separated by commas. Anything that
-# does not start with ``@`` (e.g. ``<TODO: resolve handle>``) is ignored
-# so partial entries in the markdown do not break the parse.
+# Owner handles appear as ``@login`` optionally followed by an email in
+# ``<...>``. Any ``<...>`` segment is stripped before handle extraction so
+# email domains like ``<name@warp.dev>`` do not contribute a bogus ``warp``
+# owner.
+_ANGLE_SEGMENT_RE = re.compile(r"<[^>]*>")
 _OWNER_HANDLE_RE = re.compile(r"@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)")
 
 
@@ -87,7 +89,8 @@ def _parse_owner_handles(value: str) -> list[str]:
     """
     seen: set[str] = set()
     owners: list[str] = []
-    for match in _OWNER_HANDLE_RE.finditer(value or ""):
+    sanitized = _ANGLE_SEGMENT_RE.sub(" ", value or "")
+    for match in _OWNER_HANDLE_RE.finditer(sanitized):
         handle = match.group(1)
         key = handle.lower()
         if key in seen:
