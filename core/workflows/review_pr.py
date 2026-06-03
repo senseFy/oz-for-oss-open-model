@@ -554,6 +554,36 @@ def _reviewer_from_pr_assignee(
     return []
 
 
+def _reviewer_from_existing_review_request(
+    pr: Any,
+    *,
+    owner: str,
+    pr_author_login: str,
+) -> list[str]:
+    for reviewer in get_field(pr, "requested_reviewers", []) or []:
+        if is_automation_user(reviewer):
+            continue
+        login = _normalize_reviewer_login(
+            get_login(reviewer),
+            pr_author_login=pr_author_login,
+        )
+        if login:
+            logger.info(
+                "review-pr: using existing requested reviewer %s",
+                login,
+            )
+            return [login]
+    for team in get_field(pr, "requested_teams", []) or []:
+        slug = str(get_field(team, "slug", "") or "").strip().lstrip("@")
+        if slug:
+            logger.info(
+                "review-pr: using existing requested team reviewer %s",
+                slug,
+            )
+            return [f"{owner}/{slug}"]
+    return []
+
+
 def _deterministic_reviewer_from_stakeholders(
     entries: list[dict[str, Any]],
     *,
@@ -1424,10 +1454,16 @@ def apply_review_result(
         else "COMMENT"
     )
     if requires_human_reviewer and verdict == _VERDICT_APPROVE:
-        recommended_reviewers = _reviewer_from_pr_assignee(
+        recommended_reviewers = _reviewer_from_existing_review_request(
             pr,
+            owner=owner,
             pr_author_login=pr_author_login,
         )
+        if not recommended_reviewers:
+            recommended_reviewers = _reviewer_from_pr_assignee(
+                pr,
+                pr_author_login=pr_author_login,
+            )
         if not recommended_reviewers:
             ownership_areas = [
                 OwnershipArea(
