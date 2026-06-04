@@ -307,6 +307,7 @@ class ReviewDispatchPromptNonMemberTest(unittest.TestCase):
         context = self._base_context()
         context["non_member_review_section"] = _format_non_member_review_section(
             pr_author_login="contributor",
+            is_non_member=True,
             ownership_areas_block=(
                 "- MCP (Model Context Protocol)\n"
                 "  owners: @peicodes, @vkodithala\n"
@@ -333,6 +334,7 @@ class ReviewDispatchPromptNonMemberTest(unittest.TestCase):
         context = self._base_context()
         context["non_member_review_section"] = _format_non_member_review_section(
             pr_author_login="contributor",
+            is_non_member=True,
             stakeholders_block="- /docs/ → @docs-owner",
             ownership_areas_loaded=False,
         )

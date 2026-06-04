@@ -120,6 +120,28 @@ def is_automation_user(user: Any) -> bool:
     )
 
 
+def oz_bot_login() -> str:
+    """Return the configured Oz GitHub App bot login, or empty when unset.
+
+    Derived from ``GH_APP_SLUG`` as ``<slug>[bot]`` to match the login
+    GitHub stamps on App-authored actions.
+    """
+    app_slug = optional_env("GH_APP_SLUG")
+    return f"{app_slug}[bot]" if app_slug else ""
+
+
+def is_oz_bot_user(user: Any) -> bool:
+    """Return whether *user* is this repo's Oz GitHub App bot.
+
+    Narrower than :func:`is_automation_user`: only the configured Oz bot
+    matches, so other automation accounts (e.g. dependabot) are excluded.
+    """
+    bot_login = oz_bot_login()
+    if not bot_login:
+        return False
+    return get_login(user).strip().lower() == bot_login.lower()
+
+
 
 def get_timestamp_text(value: Any) -> str:
     if isinstance(value, datetime):
@@ -612,8 +634,7 @@ class WorkflowProgressComment:
             run_id=self.run_id,
         )
         self._workflow_prefix = _workflow_metadata_prefix(workflow, issue_number)
-        app_slug = optional_env("GH_APP_SLUG")
-        self._bot_login = f"{app_slug}[bot]" if app_slug else ""
+        self._bot_login = oz_bot_login()
         self.comment_id: int | None = (
             int(comment_id) if comment_id is not None and int(comment_id) > 0 else None
         )
