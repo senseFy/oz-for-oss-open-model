@@ -97,6 +97,15 @@ class ParseOwnershipAreaFileTest(unittest.TestCase):
         areas = _parse_ownership_area_file(text)
         self.assertEqual(areas[0].owners, ["alice", "bob"])
 
+    def test_ignores_handles_inside_angle_bracketed_emails(self) -> None:
+        text = (
+            "### Area\n"
+            "- **Owners**: @alice <alice@warp.dev>, @bob <bob@warp.dev>\n"
+            "- **Matches**: x\n"
+        )
+        areas = _parse_ownership_area_file(text)
+        self.assertEqual(areas[0].owners, ["alice", "bob"])
+
 
 class LoadOwnershipAreasFromRepoTest(unittest.TestCase):
     def _make_repo(
