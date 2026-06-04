@@ -143,6 +143,18 @@ class CheckPrIssueStateForReviewTest(unittest.TestCase):
         self.assertFalse(check["allowed"])
         self.assertEqual(check["issue_statuses"][0].readiness_labels, ["ready-to-spec"])
 
+    def test_reserved_internal_label_overrides_ready_label(self) -> None:
+        check = self._check(
+            changed_files=["core/routing.py"],
+            issue_numbers=[18],
+            labels_by_issue={18: ["ready-to-implement", "warp:reserved-internal"]},
+            github_linked_issue_numbers=[18],
+        )
+
+        self.assertFalse(check["allowed"])
+        self.assertEqual(check["ready_issue_numbers"], [18])
+        self.assertEqual(check["reserved_internal_issue_numbers"], [18])
+
     def test_multiple_issues_pass_when_any_issue_is_ready(self) -> None:
         check = self._check(
             changed_files=["core/routing.py"],
@@ -296,6 +308,68 @@ class EnforcePrIssueStateForReviewTest(unittest.TestCase):
             body,
         )
         self.assertEqual(reviews_created[0]["event"], "REQUEST_CHANGES")
+
+    def test_blocked_pr_with_reserved_internal_issue_rejects_contributor_pr(self) -> None:
+        pr_issue = _IssueWithComments()
+        linked_issue = _issue("ready-to-implement", "warp:reserved-internal")
+        repo = _Repo({10: pr_issue, 101: linked_issue})
+        repo.default_branch = "main"
+        reviews_created: list[dict] = []
+
+        def _create_review(body: str, event: str) -> None:
+            reviews_created.append({"body": body, "event": event})
+
+        pr = SimpleNamespace(
+            number=10,
+            body="",
+            user=SimpleNamespace(login="external-user", type="User"),
+            author_association="NONE",
+            get_files=lambda: [_file("core/routing.py")],
+            create_review=_create_review,
+        )
+
+        association = {
+            "same_repo_issue_numbers": [101],
+            "github_linked_issues": [
+                {
+                    "owner": "acme",
+                    "repo": "widgets",
+                    "number": 101,
+                    "source": "closingIssuesReferences",
+                }
+            ],
+            "deterministic_issue_numbers": [],
+            "primary_issue_number": 101,
+            "ambiguous": False,
+        }
+        with patch(
+            "workflows.review_pr.resolve_pr_association",
+            return_value=association,
+        ), patch(
+            "workflows.review_pr.decode_repo_text_file",
+            return_value="# Contributing",
+        ):
+            allowed = enforce_pr_issue_state_for_review(
+                repo,  # type: ignore[arg-type]
+                owner="acme",
+                repo="widgets",
+                pr=pr,
+                requester="alice",
+            )
+
+        self.assertFalse(allowed)
+        self.assertEqual(len(pr_issue.comments), 1)
+        body = pr_issue.comments[0].body
+        self.assertIn("#101", body)
+        self.assertIn("`warp:reserved-internal`", body)
+        self.assertIn("reserving the work for internal implementation", body)
+        self.assertIn("not accepting contributor PRs", body)
+        self.assertIn(
+            "https://github.com/acme/widgets/blob/main/CONTRIBUTING.md",
+            body,
+        )
+        self.assertEqual(reviews_created[0]["event"], "REQUEST_CHANGES")
+        self.assertIn("`warp:reserved-internal`", reviews_created[0]["body"])
 
     def test_blocked_pr_without_contributing_md_omits_link(self) -> None:
         pr_issue = _IssueWithComments()
