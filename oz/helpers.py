@@ -204,7 +204,9 @@ def triggering_comment_prompt_text(event_payload: dict[str, Any]) -> str:
     if not body:
         return ""
     author_login = (comment.get("user") or {}).get("login") or (event_payload.get("sender") or {}).get("login") or "unknown"
-    return f"@{author_login} commented:\n{body}"
+    association = str(comment.get("author_association") or "NONE").strip().upper() or "NONE"
+    trust = "TRUSTED" if association in ORG_MEMBER_ASSOCIATIONS else "UNVERIFIED"
+    return f"@{author_login} [association={association}, trust={trust}] commented:\n{body}"
 
 
 def comment_metadata(

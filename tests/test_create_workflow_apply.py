@@ -148,6 +148,37 @@ class CreateImplementationTriggeringCommentTest(unittest.TestCase):
         )
 
 
+class TriggeringCommentTrustLabelTest(unittest.TestCase):
+    """The shared triggering-comment text labels the commenter's identity
+    and a trust marker derived from GitHub author_association."""
+
+    def _payload(self, association: str) -> dict[str, object]:
+        return {
+            "comment": {
+                "body": "please skip the migration",
+                "user": {"login": "alice"},
+                "author_association": association,
+            }
+        }
+
+    def test_org_member_is_trusted(self) -> None:
+        from oz.helpers import triggering_comment_prompt_text
+
+        self.assertEqual(
+            triggering_comment_prompt_text(self._payload("MEMBER")),
+            "@alice [association=MEMBER, trust=TRUSTED] commented:\n"
+            "please skip the migration",
+        )
+
+    def test_outside_contributor_is_unverified(self) -> None:
+        from oz.helpers import triggering_comment_prompt_text
+
+        self.assertIn(
+            "[association=CONTRIBUTOR, trust=UNVERIFIED]",
+            triggering_comment_prompt_text(self._payload("CONTRIBUTOR")),
+        )
+
+
 class CreateSpecApplyTest(unittest.TestCase):
     def test_branch_updated_since_uses_one_minute_cushion(self) -> None:
         from core.workflows.create_spec_from_issue import apply_create_spec_result
