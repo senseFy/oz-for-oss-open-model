@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -264,6 +265,7 @@ class OwnershipAreasPromptSectionTest(unittest.TestCase):
     def test_prompt_requires_single_area_and_gates_on_verdict(self) -> None:
         prompt = _format_non_member_review_section(
             pr_author_login="contributor",
+            is_non_member=True,
             ownership_areas_block=(
                 "- Docs API\n"
                 "  owners: @api-owner, @backup-owner\n"
@@ -285,6 +287,7 @@ class OwnershipAreasPromptSectionTest(unittest.TestCase):
     def test_fallback_prompt_keeps_legacy_stakeholders_contract(self) -> None:
         prompt = _format_non_member_review_section(
             pr_author_login="contributor",
+            is_non_member=True,
             stakeholders_block="- /docs/ → @docs-owner",
             ownership_areas_loaded=False,
         )
@@ -295,6 +298,21 @@ class OwnershipAreasPromptSectionTest(unittest.TestCase):
             "deterministically choose a fallback reviewer from `.github/STAKEHOLDERS`",
             prompt,
         )
+
+    def test_bot_pr_reject_posts_comment_not_request_changes(self) -> None:
+        # The Oz bot's own PRs (is_non_member=False) must not advertise a
+        # blocking REQUEST_CHANGES outcome, matching apply_review_result.
+        for ownership_areas_loaded in (True, False):
+            with self.subTest(ownership_areas_loaded=ownership_areas_loaded):
+                prompt = _format_non_member_review_section(
+                    pr_author_login="oz-for-oss[bot]",
+                    is_non_member=False,
+                    ownership_areas_block="- Docs API\n  owners: @api-owner",
+                    stakeholders_block="- /docs/ → @docs-owner",
+                    ownership_areas_loaded=ownership_areas_loaded,
+                )
+                self.assertNotIn("REQUEST_CHANGES", prompt)
+                self.assertIn("`COMMENT`", prompt)
 
 
 class FormatReviewCompletionMessageTest(unittest.TestCase):
@@ -880,7 +898,9 @@ class RequiresHumanReviewerEscalationTest(unittest.TestCase):
     def _gather(self, pr: SimpleNamespace) -> dict:
         github = MagicMock()
         github.get_pull.return_value = pr
-        with patch(
+        with patch.dict(
+            os.environ, {"GH_APP_SLUG": "oz-for-oss"}
+        ), patch(
             "workflows.review_pr.resolve_issue_number_for_pr", return_value=None
         ), patch(
             "workflows.review_pr.repo_local_skill_path_for_dispatch",
@@ -947,6 +967,23 @@ class RequiresHumanReviewerEscalationTest(unittest.TestCase):
                 self.assertTrue(context["non_member_review_section"])
                 pr = self._apply_approve(context)
                 pr.create_review_request.assert_called_once()
+
+    def test_non_oz_bot_pr_does_not_require_human_reviewer(self) -> None:
+        # dependabot and other automation accounts keep their own
+        # reviewer-assignment conventions; only the configured Oz bot
+        # escalates.
+        context = self._gather(
+            self._make_pr(
+                login="dependabot[bot]",
+                user_type="Bot",
+                association="NONE",
+                filenames=["requirements.txt"],
+            )
+        )
+        self.assertFalse(context["requires_human_reviewer"])
+        self.assertEqual(context["non_member_review_section"], "")
+        pr = self._apply_approve(context)
+        pr.create_review_request.assert_not_called()
 
     def test_member_pr_never_requires_human_reviewer(self) -> None:
         for filenames in (["specs/GH1/product.md"], ["core/app.py"]):
