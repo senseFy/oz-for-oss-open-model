@@ -255,6 +255,8 @@ def check_pr_issue_state_for_review(
         if status.is_reserved_internal
     ]
     return {
+        # Note: in practice, we don't expect triagers to assign both `ready-to-spec/implement` and `warp:reserved-internal` together.
+        # But if they do, we block the PR from being reviewed until `warp:reserved-internal` is removed.
         "allowed": bool(ready_issue_numbers) and not bool(reserved_internal_issue_numbers),
         "spec_only": spec_only,
         "required_label": required_label,
