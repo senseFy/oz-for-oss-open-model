@@ -46,7 +46,9 @@ Webhook coverage today:
     the normal bot-author drop. Other opened issues route to
     ``triage-new-issues`` regardless of existing lifecycle labels
     (``ready-to-spec`` / ``ready-to-implement`` issues still get a
-    triage pass).
+    triage pass). Automation-authored opened issues are skipped unless
+    they come from the allowlisted internal Slack feedback bot, whose
+    reports still need labels for external contributors.
   - ``assigned`` routes to ``create-spec-from-issue`` or
     ``create-implementation-from-issue`` when the assignee being
     added is ``oz-agent`` and the issue carries the matching
@@ -99,6 +101,11 @@ NEEDS_INFO_LABEL = "needs-info"
 READY_TO_SPEC_LABEL = "ready-to-spec"
 READY_TO_IMPLEMENT_LABEL = "ready-to-implement"
 AUTO_IMPLEMENT_LABEL = "auto-implement"
+ISSUE_TRIAGE_BOT_AUTHOR_ALLOWLIST = frozenset(
+    {
+        "warp-dev-github-integration[bot]",
+    }
+)
 
 OZ_AGENT_MENTION = "@oz-agent"
 OZ_REVIEW_COMMAND = "/oz-review"
@@ -168,6 +175,14 @@ def _is_bot(actor: Any) -> bool:
         return True
     login = _login(actor).lower()
     return bool(login) and login.endswith("[bot]")
+
+
+def _is_issue_triage_allowlisted_bot(actor: Any) -> bool:
+    """Return True when *actor* is an automation account allowed to trigger issue triage."""
+    return (
+        _is_bot(actor)
+        and _login(actor).lower() in ISSUE_TRIAGE_BOT_AUTHOR_ALLOWLIST
+    )
 
 
 def _route_issue_comment(payload: dict[str, Any]) -> RouteDecision:
@@ -266,7 +281,9 @@ def _route_issues(payload: dict[str, Any]) -> RouteDecision:
       ``ready-to-implement``, etc.) — for example because they were
       imported from another repo or re-opened — still get a triage
       pass so the bot can post a fresh progress comment and pick up
-      any state changes that landed while the issue was closed.
+      any state changes that landed while the issue was closed. The
+      internal Slack feedback bot is allowlisted through the bot-author
+      drop because its generated issues still need triage labels.
     - ``assigned`` triggers ``create-spec-from-issue`` or
       ``create-implementation-from-issue`` when the assignee being
       added is ``oz-agent`` itself and the issue carries the
@@ -301,7 +318,8 @@ def _route_issues(payload: dict[str, Any]) -> RouteDecision:
                 WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE,
                 "auto-implement label on newly opened issue",
             )
-        if _is_bot(issue.get("user")):
+        issue_author = issue.get("user")
+        if _is_bot(issue_author) and not _is_issue_triage_allowlisted_bot(issue_author):
             return RouteDecision(None, "issue authored by automation user")
         return RouteDecision(
             WORKFLOW_TRIAGE_NEW_ISSUES, "issues.opened triggers triage"
