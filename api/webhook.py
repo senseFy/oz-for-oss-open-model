@@ -60,13 +60,6 @@ _EVENT_HEADER = "x-github-event"
 _DELIVERY_HEADER = "x-github-delivery"
 
 
-def _normalize_login_allowlist(values: Iterable[str] | None) -> frozenset[str]:
-    return frozenset(
-        value.strip().removeprefix("@").lower()
-        for value in values or []
-        if isinstance(value, str) and value.strip()
-    )
-
 
 
 @dataclass(frozen=True)
@@ -181,15 +174,15 @@ def process_webhook_request(
             body={"error": "webhook payload must be a JSON object"},
         )
 
-    route_triage_bot_author_allowlist = _normalize_login_allowlist(
-        triage_bot_author_allowlist
+    route_triage_bot_author_allowlist: frozenset[str] = frozenset(
+        triage_bot_author_allowlist or ()
     )
     if (
         triage_bot_author_allowlist_loader is not None
         and needs_triage_bot_author_allowlist(event, payload)
     ):
         try:
-            route_triage_bot_author_allowlist = _normalize_login_allowlist(
+            route_triage_bot_author_allowlist = frozenset(
                 triage_bot_author_allowlist_loader(payload)
             )
         except Exception as exc:
