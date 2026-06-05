@@ -108,6 +108,61 @@ class IssuesEventTest(unittest.TestCase):
         )
         self.assertIsNone(decision.workflow)
 
+    def test_issues_opened_for_slack_feedback_bot_without_allowlist_is_dropped(
+        self,
+    ) -> None:
+        decision = route_event(
+            "issues",
+            {
+                "action": "opened",
+                "issue": _issue(
+                    user={
+                        "login": "warp-dev-github-integration[bot]",
+                        "type": "Bot",
+                    }
+                ),
+            },
+        )
+        self.assertIsNone(decision.workflow)
+
+    def test_issues_opened_for_configured_bot_author_routes_to_triage(self) -> None:
+        decision = route_event(
+            "issues",
+            {
+                "action": "opened",
+                "issue": _issue(
+                    user={
+                        "login": "warp-dev-github-integration[bot]",
+                        "type": "Bot",
+                    }
+                ),
+            },
+            triage_bot_author_allowlist=frozenset(
+                {"warp-dev-github-integration[bot]"}
+            ),
+        )
+        self.assertEqual(decision.workflow, WORKFLOW_TRIAGE_NEW_ISSUES)
+
+    def test_issues_opened_for_configured_bot_author_login_is_case_insensitive(
+        self,
+    ) -> None:
+        decision = route_event(
+            "issues",
+            {
+                "action": "opened",
+                "issue": _issue(
+                    user={
+                        "login": "Warp-Dev-GitHub-Integration[Bot]",
+                        "type": "Bot",
+                    }
+                ),
+            },
+            triage_bot_author_allowlist=frozenset(
+                {"warp-dev-github-integration[bot]"}
+            ),
+        )
+        self.assertEqual(decision.workflow, WORKFLOW_TRIAGE_NEW_ISSUES)
+
     def test_issues_opened_with_auto_implement_from_bot_routes_to_create_implementation(
         self,
     ) -> None:

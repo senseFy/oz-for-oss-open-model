@@ -65,7 +65,13 @@ self_improvement:
 triage:
   prior_triage_labels:
     - triaged
+  bot_author_allowlist:
+    - trusted-intake[bot]
 ```
+
+`triage.bot_author_allowlist` lets a repository opt specific automation
+accounts back into `issues.opened` triage. Other bot-authored issues are
+skipped by default.
 
 ## 4. Bootstrap triage configuration (optional)
 

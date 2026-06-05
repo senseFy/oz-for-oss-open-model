@@ -46,7 +46,8 @@ Webhook coverage today:
     the normal bot-author drop. Other opened issues route to
     ``triage-new-issues`` regardless of existing lifecycle labels
     (``ready-to-spec`` / ``ready-to-implement`` issues still get a
-    triage pass).
+    triage pass). Automation-authored opened issues are skipped unless
+    the author is present in the configured triage bot author allowlist.
   - ``assigned`` routes to ``create-spec-from-issue`` or
     ``create-implementation-from-issue`` when the assignee being
     added is ``oz-agent`` and the issue carries the matching
@@ -76,7 +77,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 # Workflow identifiers the dispatcher knows how to handle. These strings
 # are used as state-store keys and as ``RouteDecision.workflow`` values
@@ -170,6 +171,29 @@ def _is_bot(actor: Any) -> bool:
     return bool(login) and login.endswith("[bot]")
 
 
+def _is_issue_triage_allowlisted_bot(
+    actor: Any,
+    bot_author_allowlist: frozenset[str],
+) -> bool:
+    """Return True when *actor* is an automation account allowed to trigger issue triage."""
+    return (
+        _is_bot(actor)
+        and _login(actor).lower() in bot_author_allowlist
+    )
+
+
+def needs_triage_bot_author_allowlist(event: str, payload: Mapping[str, Any]) -> bool:
+    """Return True when *event*/*payload* is a bot-authored ``issues.opened``."""
+    if event != "issues":
+        return False
+    if str(payload.get("action") or "").strip() != "opened":
+        return False
+    issue = payload.get("issue") or {}
+    if not isinstance(issue, dict) or issue.get("pull_request"):
+        return False
+    return _is_bot(issue.get("user"))
+
+
 def _route_issue_comment(payload: dict[str, Any]) -> RouteDecision:
     action = str(payload.get("action") or "").strip()
     if action != "created":
@@ -252,7 +276,11 @@ def _route_plain_issue_comment(
     )
 
 
-def _route_issues(payload: dict[str, Any]) -> RouteDecision:
+def _route_issues(
+    payload: dict[str, Any],
+    *,
+    bot_author_allowlist: frozenset[str] = frozenset(),
+) -> RouteDecision:
     """Route an ``issues`` webhook event.
 
     Three actions are routed:
@@ -267,6 +295,8 @@ def _route_issues(payload: dict[str, Any]) -> RouteDecision:
       imported from another repo or re-opened — still get a triage
       pass so the bot can post a fresh progress comment and pick up
       any state changes that landed while the issue was closed.
+      Configured bot authors are allowlisted through the bot check
+      because some generated issues still need triage labels.
     - ``assigned`` triggers ``create-spec-from-issue`` or
       ``create-implementation-from-issue`` when the assignee being
       added is ``oz-agent`` itself and the issue carries the
@@ -301,7 +331,11 @@ def _route_issues(payload: dict[str, Any]) -> RouteDecision:
                 WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE,
                 "auto-implement label on newly opened issue",
             )
-        if _is_bot(issue.get("user")):
+        issue_author = issue.get("user")
+        if _is_bot(issue_author) and not _is_issue_triage_allowlisted_bot(
+            issue_author,
+            bot_author_allowlist,
+        ):
             return RouteDecision(None, "issue authored by automation user")
         return RouteDecision(
             WORKFLOW_TRIAGE_NEW_ISSUES, "issues.opened triggers triage"
@@ -463,7 +497,12 @@ _EVENT_HANDLERS = {
 }
 
 
-def route_event(event: str, payload: dict[str, Any]) -> RouteDecision:
+def route_event(
+    event: str,
+    payload: dict[str, Any],
+    *,
+    triage_bot_author_allowlist: frozenset[str] | None = None,
+) -> RouteDecision:
     """Decide which workflow (if any) handles *event* + *payload*.
 
     The router never raises on unknown events or malformed payloads; it
@@ -472,6 +511,11 @@ def route_event(event: str, payload: dict[str, Any]) -> RouteDecision:
     """
     if not isinstance(payload, dict):
         return RouteDecision(None, "non-object webhook payload")
+    if event == "issues":
+        return _route_issues(
+            payload,
+            bot_author_allowlist=triage_bot_author_allowlist or frozenset(),
+        )
     handler = _EVENT_HANDLERS.get(event)
     if handler is None:
         return RouteDecision(None, f"event {event!r} not handled")
@@ -502,5 +546,6 @@ __all__ = [
     "WORKFLOW_TRIAGE_NEW_ISSUES",
     "WORKFLOW_VERIFY_PR_COMMENT",
     "has_oz_review_command",
+    "needs_triage_bot_author_allowlist",
     "route_event",
 ]

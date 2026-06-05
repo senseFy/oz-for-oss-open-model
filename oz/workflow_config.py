@@ -19,12 +19,16 @@ _GITHUB_HANDLE_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 class SelfImprovementConfig:
     reviewers: list[str] | None
     base_branch: str | None
+
+
 @dataclass(frozen=True)
 class TriageWorkflowConfig:
     prior_triage_labels: frozenset[str]
+    bot_author_allowlist: frozenset[str]
 
 
 _DEFAULT_PRIOR_TRIAGE_LABELS: frozenset[str] = frozenset({"triaged"})
+_DEFAULT_BOT_AUTHOR_ALLOWLIST: frozenset[str] = frozenset()
 
 
 def resolve_repo_config_path(workspace_root: Path) -> Path | None:
@@ -105,6 +109,45 @@ def _parse_label_list(
     return frozenset(labels)
 
 
+def _parse_login_list(
+    raw_value: Any,
+    *,
+    config_path: Path,
+    source: str,
+) -> frozenset[str]:
+    if not isinstance(raw_value, list):
+        raise _fail(config_path, f"{source} must be a list of GitHub logins.")
+    logins: set[str] = set()
+    for item in raw_value:
+        if not isinstance(item, str):
+            raise _fail(config_path, f"{source} entries must be strings.")
+        value = item.strip().removeprefix("@").lower()
+        if not value:
+            raise _fail(config_path, f"{source} entries must not be blank.")
+        if any(char.isspace() for char in value):
+            raise _fail(config_path, f"Invalid GitHub login {value!r} in {source}.")
+        logins.add(value)
+    return frozenset(logins)
+
+
+def _parse_workflow_config_text(config_path: Path, text: str) -> dict[str, Any]:
+    try:
+        raw_data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise _fail(config_path, "Invalid YAML in .github/oz/config.yml.") from exc
+
+    if raw_data is None:
+        raw_data = {}
+    if not isinstance(raw_data, dict):
+        raise _fail(config_path, "The config root must be a YAML mapping.")
+
+    version = raw_data.get("version")
+    if version != 1:
+        raise _fail(config_path, "Unsupported config version; expected version: 1.")
+
+    return raw_data
+
+
 def _load_raw_workflow_config(
     workspace_root: Path,
     *,
@@ -120,22 +163,11 @@ def _load_raw_workflow_config(
         return CONFIG_RELATIVE_PATH, {"version": 1}
 
     try:
-        raw_data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise _fail(config_path, "Invalid YAML in .github/oz/config.yml.") from exc
+        text = config_path.read_text(encoding="utf-8")
     except OSError as exc:
         raise _fail(config_path, "Unable to read .github/oz/config.yml.") from exc
 
-    if raw_data is None:
-        raw_data = {}
-    if not isinstance(raw_data, dict):
-        raise _fail(config_path, "The config root must be a YAML mapping.")
-
-    version = raw_data.get("version")
-    if version != 1:
-        raise _fail(config_path, "Unsupported config version; expected version: 1.")
-
-    return config_path, raw_data
+    return config_path, _parse_workflow_config_text(config_path, text)
 
 
 def _parse_env_reviewers(config_path: Path) -> list[str] | None:
@@ -216,13 +248,11 @@ def load_self_improvement_config(workspace_root: Path) -> SelfImprovementConfig:
     return SelfImprovementConfig(reviewers=reviewers, base_branch=base_branch)
 
 
-def load_triage_workflow_config(workspace_root: Path) -> TriageWorkflowConfig:
-    """Load the optional triage workflow settings from `.github/oz/config.yml`."""
-    config_path, raw_data = _load_raw_workflow_config(
-        workspace_root,
-        require_exists=False,
-    )
-
+def _parse_triage_workflow_config(
+    *,
+    config_path: Path,
+    raw_data: dict[str, Any],
+) -> TriageWorkflowConfig:
     triage = raw_data.get("triage")
     if triage is None:
         triage = {}
@@ -232,7 +262,7 @@ def load_triage_workflow_config(workspace_root: Path) -> TriageWorkflowConfig:
     unknown_keys = sorted(
         key
         for key in triage.keys()
-        if key not in {"prior_triage_labels"}
+        if key not in {"prior_triage_labels", "bot_author_allowlist"}
     )
     if unknown_keys:
         raise _fail(
@@ -248,4 +278,77 @@ def load_triage_workflow_config(workspace_root: Path) -> TriageWorkflowConfig:
             source="triage.prior_triage_labels",
         )
 
-    return TriageWorkflowConfig(prior_triage_labels=prior_triage_labels)
+    bot_author_allowlist = _DEFAULT_BOT_AUTHOR_ALLOWLIST
+    if "bot_author_allowlist" in triage:
+        bot_author_allowlist = _parse_login_list(
+            triage["bot_author_allowlist"],
+            config_path=config_path,
+            source="triage.bot_author_allowlist",
+        )
+
+    return TriageWorkflowConfig(
+        prior_triage_labels=prior_triage_labels,
+        bot_author_allowlist=bot_author_allowlist,
+    )
+
+
+def load_triage_workflow_config(workspace_root: Path) -> TriageWorkflowConfig:
+    """Load the optional triage workflow settings from `.github/oz/config.yml`."""
+    config_path, raw_data = _load_raw_workflow_config(
+        workspace_root,
+        require_exists=False,
+    )
+    return _parse_triage_workflow_config(
+        config_path=config_path,
+        raw_data=raw_data,
+    )
+
+
+def load_triage_workflow_config_from_text(
+    text: str,
+    *,
+    config_path: Path | str = CONFIG_RELATIVE_PATH,
+) -> TriageWorkflowConfig:
+    """Load triage workflow settings from API-fetched `.github/oz/config.yml` text."""
+    resolved_config_path = Path(config_path)
+    raw_data = _parse_workflow_config_text(resolved_config_path, text)
+    return _parse_triage_workflow_config(
+        config_path=resolved_config_path,
+        raw_data=raw_data,
+    )
+
+
+def load_triage_bot_author_allowlist(
+    repo_handle: Any,
+    fallback_workspace: Path,
+    *,
+    repo_text_fetcher: Any | None = None,
+) -> frozenset[str]:
+    """Load ``triage.bot_author_allowlist`` for a webhook delivery.
+
+    Tries the consuming repository's ``.github/oz/config.yml`` via the
+    GitHub API first. Falls back to the bundled config on disk at
+    *fallback_workspace* when the consuming repo does not have one.
+    Raises on malformed config so the webhook can surface the error
+    rather than silently falling back to an empty allowlist.
+
+    *repo_text_fetcher* is an optional callable ``(repo_handle, path) -> str | None``
+    used to read a text file from the repo. Defaults to
+    ``oz.triage.decode_repo_text_file`` when not provided.
+    """
+    if repo_text_fetcher is None:
+        from .triage import decode_repo_text_file
+        repo_text_fetcher = decode_repo_text_file
+
+    config_text = repo_text_fetcher(
+        repo_handle,
+        str(CONFIG_RELATIVE_PATH),
+    )
+    if config_text is not None:
+        return load_triage_workflow_config_from_text(
+            config_text,
+            config_path=CONFIG_RELATIVE_PATH,
+        ).bot_author_allowlist
+    return load_triage_workflow_config(
+        fallback_workspace,
+    ).bot_author_allowlist

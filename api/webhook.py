@@ -28,7 +28,7 @@ import logging
 import os
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from core.dispatch import (
     DispatchRequest,
@@ -41,6 +41,7 @@ from core.routing import (
     RouteDecision,
     WORKFLOW_ANNOUNCE_READY_ISSUE,
     WORKFLOW_PLAN_APPROVED,
+    needs_triage_bot_author_allowlist,
     route_event,
 )
 from core.signatures import (
@@ -57,6 +58,8 @@ logger = logging.getLogger(__name__)
 # returned by ``BaseHTTPRequestHandler.headers``.
 _EVENT_HEADER = "x-github-event"
 _DELIVERY_HEADER = "x-github-delivery"
+
+
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,8 @@ def process_webhook_request(
     store: StateStore | None = None,
     sync_plan_approved: Callable[[Mapping[str, Any]], dict[str, Any] | None] | None = None,
     sync_announce_ready_issue: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None,
+    triage_bot_author_allowlist: Iterable[str] | None = None,
+    triage_bot_author_allowlist_loader: Callable[[Mapping[str, Any]], Iterable[str]] | None = None,
 ) -> WebhookResponse:
     """Validate a webhook delivery and dispatch the cloud agent run.
 
@@ -169,7 +174,35 @@ def process_webhook_request(
             body={"error": "webhook payload must be a JSON object"},
         )
 
-    decision: RouteDecision = route_event(event, payload)
+    route_triage_bot_author_allowlist: frozenset[str] = frozenset(
+        triage_bot_author_allowlist or ()
+    )
+    if (
+        triage_bot_author_allowlist_loader is not None
+        and needs_triage_bot_author_allowlist(event, payload)
+    ):
+        try:
+            route_triage_bot_author_allowlist = frozenset(
+                triage_bot_author_allowlist_loader(payload)
+            )
+        except Exception as exc:
+            logger.exception("Failed to load triage bot author allowlist")
+            return WebhookResponse(
+                status=500,
+                body={
+                    "event": event,
+                    "workflow": None,
+                    "reason": "failed to load triage bot author allowlist",
+                    "delivery": delivery_id or "",
+                    "error": f"route config failed: {exc}",
+                },
+            )
+
+    decision: RouteDecision = route_event(
+        event,
+        payload,
+        triage_bot_author_allowlist=route_triage_bot_author_allowlist,
+    )
     base_body: dict[str, Any] = {
         "event": event,
         "workflow": decision.workflow,
@@ -324,6 +357,9 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801 - Vercel requires this exac
             store=wiring["store"],
             sync_plan_approved=wiring["sync_plan_approved"],
             sync_announce_ready_issue=wiring["sync_announce_ready_issue"],
+            triage_bot_author_allowlist_loader=wiring[
+                "triage_bot_author_allowlist_loader"
+            ],
         )
         self._respond(response.status, response.body)
 
@@ -357,6 +393,9 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
     from core.github_app import fetch_installation_token
     from oz.oz_client import (  # type: ignore[import-not-found]
         build_agent_config,
+    )
+    from oz.workflow_config import (  # type: ignore[import-not-found]
+        load_triage_bot_author_allowlist,
     )
     from workflows.announce_ready_issue import (  # type: ignore[import-not-found]
         apply_announce_ready_issue_sync,
@@ -490,6 +529,22 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
             repo_handle, payload=payload
         )
 
+    def triage_bot_author_allowlist_loader(payload: Mapping[str, Any]) -> frozenset[str]:
+        full_name = str(
+            (payload.get("repository") or {}).get("full_name") or ""
+        )
+        if "/" not in full_name:
+            raise RuntimeError(
+                "webhook payload is missing repository.full_name; "
+                "cannot load triage bot author allowlist"
+            )
+        repo_handle = _client_for_payload().get_repo(full_name)
+        workflow_root = _Path(__file__).resolve().parents[1]
+        return load_triage_bot_author_allowlist(
+            repo_handle,
+            fallback_workspace=workflow_root,
+        )
+
     return {
         "builder_registry": builder_registry,
         "runner": runner,
@@ -497,6 +552,7 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
         "store": build_state_store(),
         "sync_plan_approved": sync_plan_approved,
         "sync_announce_ready_issue": sync_announce_ready_issue,
+        "triage_bot_author_allowlist_loader": triage_bot_author_allowlist_loader,
     }
 
 

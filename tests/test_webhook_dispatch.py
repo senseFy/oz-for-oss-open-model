@@ -25,6 +25,7 @@ from core.routing import (
     WORKFLOW_ANNOUNCE_READY_ISSUE,
     WORKFLOW_PLAN_APPROVED,
     WORKFLOW_REVIEW_PR,
+    WORKFLOW_TRIAGE_NEW_ISSUES,
 )
 from core.signatures import expected_signature
 from core.state import InMemoryStateStore
@@ -231,6 +232,85 @@ class DispatchPathTest(unittest.TestCase):
         )
         self.assertEqual(response.status, 500)
         self.assertIn("builder failed", response.body["error"])
+
+
+
+class IssueTriageRouteConfigTest(unittest.TestCase):
+    def _payload(self, *, login: str = "warp-dev-github-integration[bot]") -> dict[str, Any]:
+        return {
+            "action": "opened",
+            "repository": {"full_name": "acme/widgets"},
+            "installation": {"id": 1234},
+            "issue": {
+                "number": 42,
+                "labels": [],
+                "assignees": [],
+                "user": {"login": login, "type": "Bot"},
+            },
+        }
+
+    def test_configured_bot_author_allowlist_routes_to_triage(self) -> None:
+        body, signature = _signed_envelope(self._payload())
+        store = InMemoryStateStore()
+
+        def builder(payload: Mapping[str, Any]) -> DispatchRequest:
+            return DispatchRequest(
+                workflow=WORKFLOW_TRIAGE_NEW_ISSUES,
+                repo="acme/widgets",
+                installation_id=1234,
+                config_name=WORKFLOW_TRIAGE_NEW_ISSUES,
+                title="Triage issue #42",
+                skill_name="triage-issue",
+                prompt="prompt body",
+                payload_subset={"issue_number": 42},
+            )
+
+        loader = MagicMock(return_value=["warp-dev-github-integration[bot]"])
+        runner = MagicMock(return_value=SimpleNamespace(run_id="oz-run-triage"))
+
+        response = process_webhook_request(
+            body=body,
+            signature_header=signature,
+            event_header="issues",
+            delivery_id="delivery-triage-bot",
+            secret=_SECRET,
+            builder_registry={WORKFLOW_TRIAGE_NEW_ISSUES: builder},
+            runner=runner,
+            config_factory=lambda name, role: {"environment_id": "env", "name": name},
+            store=store,
+            triage_bot_author_allowlist_loader=loader,
+        )
+
+        self.assertEqual(response.status, 202)
+        self.assertEqual(response.body["workflow"], WORKFLOW_TRIAGE_NEW_ISSUES)
+        self.assertTrue(response.body["dispatched"])
+        self.assertEqual(response.body["run_id"], "oz-run-triage")
+        loader.assert_called_once()
+        runner.assert_called_once()
+
+    def test_unconfigured_bot_author_is_skipped_before_dispatch(self) -> None:
+        body, signature = _signed_envelope(self._payload(login="dependabot[bot]"))
+        runner = MagicMock(side_effect=AssertionError("should not dispatch"))
+        loader = MagicMock(return_value=[])
+
+        response = process_webhook_request(
+            body=body,
+            signature_header=signature,
+            event_header="issues",
+            delivery_id="delivery-triage-dependabot",
+            secret=_SECRET,
+            builder_registry={},
+            runner=runner,
+            config_factory=lambda name, role: {},
+            store=InMemoryStateStore(),
+            triage_bot_author_allowlist_loader=loader,
+        )
+
+        self.assertEqual(response.status, 202)
+        self.assertIsNone(response.body["workflow"])
+        self.assertEqual(response.body["reason"], "issue authored by automation user")
+        loader.assert_called_once()
+        runner.assert_not_called()
 
 
 
