@@ -77,7 +77,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 # Workflow identifiers the dispatcher knows how to handle. These strings
 # are used as state-store keys and as ``RouteDecision.workflow`` values
@@ -180,6 +180,23 @@ def _is_issue_triage_allowlisted_bot(
         _is_bot(actor)
         and _login(actor).lower() in bot_author_allowlist
     )
+
+
+def needs_triage_bot_author_allowlist(event: str, payload: Mapping[str, Any]) -> bool:
+    """Return True when *event*/*payload* is a bot-authored ``issues.opened``.
+
+    The webhook pre-routing path uses this to decide whether the
+    runtime config loader needs to be invoked before calling
+    :func:`route_event`.
+    """
+    if event != "issues":
+        return False
+    if str(payload.get("action") or "").strip() != "opened":
+        return False
+    issue = payload.get("issue") or {}
+    if not isinstance(issue, dict) or issue.get("pull_request"):
+        return False
+    return _is_bot(issue.get("user"))
 
 
 def _route_issue_comment(payload: dict[str, Any]) -> RouteDecision:
@@ -534,5 +551,6 @@ __all__ = [
     "WORKFLOW_TRIAGE_NEW_ISSUES",
     "WORKFLOW_VERIFY_PR_COMMENT",
     "has_oz_review_command",
+    "needs_triage_bot_author_allowlist",
     "route_event",
 ]

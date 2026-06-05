@@ -41,6 +41,7 @@ from core.routing import (
     RouteDecision,
     WORKFLOW_ANNOUNCE_READY_ISSUE,
     WORKFLOW_PLAN_APPROVED,
+    needs_triage_bot_author_allowlist,
     route_event,
 )
 from core.signatures import (
@@ -66,36 +67,6 @@ def _normalize_login_allowlist(values: Iterable[str] | None) -> frozenset[str]:
         if isinstance(value, str) and value.strip()
     )
 
-
-def _actor_login(actor: Any) -> str:
-    if isinstance(actor, dict):
-        login = actor.get("login")
-    else:
-        login = getattr(actor, "login", None)
-    return str(login or "").strip()
-
-
-def _actor_is_bot(actor: Any) -> bool:
-    user_type = ""
-    if isinstance(actor, dict):
-        user_type = str(actor.get("type") or "").strip().lower()
-    else:
-        user_type = str(getattr(actor, "type", "") or "").strip().lower()
-    if user_type == "bot":
-        return True
-    login = _actor_login(actor).lower()
-    return bool(login) and login.endswith("[bot]")
-
-
-def _needs_triage_bot_author_allowlist(event: str, payload: Mapping[str, Any]) -> bool:
-    if event != "issues":
-        return False
-    if str(payload.get("action") or "").strip() != "opened":
-        return False
-    issue = payload.get("issue") or {}
-    if not isinstance(issue, dict) or issue.get("pull_request"):
-        return False
-    return _actor_is_bot(issue.get("user"))
 
 
 @dataclass(frozen=True)
@@ -215,7 +186,7 @@ def process_webhook_request(
     )
     if (
         triage_bot_author_allowlist_loader is not None
-        and _needs_triage_bot_author_allowlist(event, payload)
+        and needs_triage_bot_author_allowlist(event, payload)
     ):
         try:
             route_triage_bot_author_allowlist = _normalize_login_allowlist(
@@ -427,14 +398,11 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
     from api.cron import build_state_store
     from core.builders import build_builder_registry
     from core.github_app import fetch_installation_token
-    from oz.triage import decode_repo_text_file
     from oz.oz_client import (  # type: ignore[import-not-found]
         build_agent_config,
     )
     from oz.workflow_config import (  # type: ignore[import-not-found]
-        CONFIG_RELATIVE_PATH,
-        load_triage_workflow_config,
-        load_triage_workflow_config_from_text,
+        load_triage_bot_author_allowlist,
     )
     from workflows.announce_ready_issue import (  # type: ignore[import-not-found]
         apply_announce_ready_issue_sync,
@@ -572,21 +540,17 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
         full_name = str(
             (payload.get("repository") or {}).get("full_name") or ""
         )
-        if "/" in full_name:
-            repo_handle = _client_for_payload().get_repo(full_name)
-            config_text = decode_repo_text_file(
-                repo_handle,
-                str(CONFIG_RELATIVE_PATH),
+        if "/" not in full_name:
+            raise RuntimeError(
+                "webhook payload is missing repository.full_name; "
+                "cannot load triage bot author allowlist"
             )
-            if config_text is not None:
-                return load_triage_workflow_config_from_text(
-                    config_text,
-                    config_path=CONFIG_RELATIVE_PATH,
-                ).bot_author_allowlist
+        repo_handle = _client_for_payload().get_repo(full_name)
         workflow_root = _Path(__file__).resolve().parents[1]
-        return load_triage_workflow_config(
-            workflow_root
-        ).bot_author_allowlist
+        return load_triage_bot_author_allowlist(
+            repo_handle,
+            fallback_workspace=workflow_root,
+        )
 
     return {
         "builder_registry": builder_registry,

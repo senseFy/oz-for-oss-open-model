@@ -316,3 +316,39 @@ def load_triage_workflow_config_from_text(
         config_path=resolved_config_path,
         raw_data=raw_data,
     )
+
+
+def load_triage_bot_author_allowlist(
+    repo_handle: Any,
+    fallback_workspace: Path,
+    *,
+    repo_text_fetcher: Any | None = None,
+) -> frozenset[str]:
+    """Load ``triage.bot_author_allowlist`` for a webhook delivery.
+
+    Tries the consuming repository's ``.github/oz/config.yml`` via the
+    GitHub API first. Falls back to the bundled config on disk at
+    *fallback_workspace* when the consuming repo does not have one.
+    Raises on malformed config so the webhook can surface the error
+    rather than silently falling back to an empty allowlist.
+
+    *repo_text_fetcher* is an optional callable ``(repo_handle, path) -> str | None``
+    used to read a text file from the repo. Defaults to
+    ``oz.triage.decode_repo_text_file`` when not provided.
+    """
+    if repo_text_fetcher is None:
+        from .triage import decode_repo_text_file
+        repo_text_fetcher = decode_repo_text_file
+
+    config_text = repo_text_fetcher(
+        repo_handle,
+        str(CONFIG_RELATIVE_PATH),
+    )
+    if config_text is not None:
+        return load_triage_workflow_config_from_text(
+            config_text,
+            config_path=CONFIG_RELATIVE_PATH,
+        ).bot_author_allowlist
+    return load_triage_workflow_config(
+        fallback_workspace,
+    ).bot_author_allowlist
