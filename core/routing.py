@@ -183,12 +183,7 @@ def _is_issue_triage_allowlisted_bot(
 
 
 def needs_triage_bot_author_allowlist(event: str, payload: Mapping[str, Any]) -> bool:
-    """Return True when *event*/*payload* is a bot-authored ``issues.opened``.
-
-    The webhook pre-routing path uses this to decide whether the
-    runtime config loader needs to be invoked before calling
-    :func:`route_event`.
-    """
+    """Return True when *event*/*payload* is a bot-authored ``issues.opened``."""
     if event != "issues":
         return False
     if str(payload.get("action") or "").strip() != "opened":
@@ -300,8 +295,8 @@ def _route_issues(
       imported from another repo or re-opened — still get a triage
       pass so the bot can post a fresh progress comment and pick up
       any state changes that landed while the issue was closed.
-      Configured bot authors are allowlisted through the bot-author
-      drop because some generated issues still need triage labels.
+      Configured bot authors are allowlisted through the bot check
+      because some generated issues still need triage labels.
     - ``assigned`` triggers ``create-spec-from-issue`` or
       ``create-implementation-from-issue`` when the assignee being
       added is ``oz-agent`` itself and the issue carries the
