@@ -87,6 +87,7 @@ _REVIEW_ATTACHMENT_PAYLOAD_FIELDS = {
 _READY_TO_SPEC_LABEL = "ready-to-spec"
 _READY_TO_IMPLEMENT_LABEL = "ready-to-implement"
 _READY_LABELS = frozenset({_READY_TO_SPEC_LABEL, _READY_TO_IMPLEMENT_LABEL})
+_RESERVED_INTERNAL_LABEL = "warp:reserved-internal"
 
 # Allowed values for the agent-supplied ``verdict`` field on ``review.json``.
 _VERDICT_APPROVE = "APPROVE"
@@ -177,6 +178,7 @@ class IssueReadinessStatus:
     labels: list[str]
     readiness_labels: list[str]
     has_required_label: bool
+    is_reserved_internal: bool
     is_pull_request: bool
 
 
@@ -202,6 +204,7 @@ def _issue_readiness_status(
         labels=labels,
         readiness_labels=readiness_labels,
         has_required_label=required_label in labels and not is_pull_request,
+        is_reserved_internal=_RESERVED_INTERNAL_LABEL in labels and not is_pull_request,
         is_pull_request=is_pull_request,
     )
 
@@ -247,14 +250,22 @@ def check_pr_issue_state_for_review(
         for status in issue_statuses
         if status.has_required_label
     ]
+    reserved_internal_issue_numbers = [
+        status.number
+        for status in issue_statuses
+        if status.is_reserved_internal
+    ]
     return {
-        "allowed": bool(ready_issue_numbers),
+        # Note: in practice, we don't expect triagers to assign both `ready-to-spec/implement` and `warp:reserved-internal` together.
+        # But if they do, we block the PR from being reviewed until `warp:reserved-internal` is removed.
+        "allowed": bool(ready_issue_numbers) and not bool(reserved_internal_issue_numbers),
         "spec_only": spec_only,
         "required_label": required_label,
         "association": association,
         "issue_numbers": issue_numbers,
         "issue_statuses": issue_statuses,
         "ready_issue_numbers": ready_issue_numbers,
+        "reserved_internal_issue_numbers": reserved_internal_issue_numbers,
     }
 
 
@@ -285,14 +296,30 @@ def _format_pr_issue_state_failure_message(
 ) -> str:
     required_label = str(check["required_label"])
     issue_numbers = [int(number) for number in check.get("issue_numbers") or []]
+    reserved_internal_issue_numbers = [
+        int(number) for number in check.get("reserved_internal_issue_numbers") or []
+    ]
     sections: list[str] = []
     normalized_requester = requester.strip().removeprefix("@")
     if normalized_requester:
         sections.append(f"@{normalized_requester}")
-    sections.append(
-        "Every PR must be linked to a same-repo issue before Oz can review it."
-    )
-    if issue_numbers:
+    if reserved_internal_issue_numbers:
+        issue_text = _format_issue_numbers(reserved_internal_issue_numbers)
+        sections.append(
+            f"This PR is linked to {issue_text}, which is marked "
+            f"`{_RESERVED_INTERNAL_LABEL}`. That label means the Warp team is "
+            "reserving the work for internal implementation or alignment, so "
+            "we are not accepting contributor PRs for it right now."
+        )
+        sections.append(
+            "**Next step:** please look for another issue marked "
+            "`ready-to-spec` or `ready-to-implement`. If you think this label "
+            "was applied by mistake, mention `@oss-maintainers` on the issue."
+        )
+    elif issue_numbers:
+        sections.append(
+            "Every PR must be linked to a same-repo issue before Oz can review it."
+        )
         issue_text = _format_issue_numbers(issue_numbers)
         sections.append(
             f"This PR is linked to {issue_text}, but no linked issue is marked "
@@ -301,6 +328,9 @@ def _format_pr_issue_state_failure_message(
             "push a new commit or comment `/oz-review` to re-trigger review."
         )
     else:
+        sections.append(
+            "Every PR must be linked to a same-repo issue before Oz can review it."
+        )
         sections.append(
             "**Next step:** open or find a same-repo issue describing this change, "
             "then link it to this PR by adding `Closes #123` to the PR description "

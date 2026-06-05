@@ -31,6 +31,7 @@ class FetchContextCommandPromptTest(unittest.TestCase):
             issue_labels=[],
             issue_assignees=[],
             spec_context_text="Spec body",
+            triggering_comment_text="",
             target_branch="oz-agent/implement-issue-42",
             default_branch="main",
             implement_specs_skill_path="warpdotdev/common-skills:.agents/skills/implement-specs/SKILL.md",
