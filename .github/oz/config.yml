@@ -1,3 +1,6 @@
 version: 1
 self_improvement:
   base_branch: auto
+triage:
+  bot_author_allowlist:
+    - warp-dev-github-integration[bot]
