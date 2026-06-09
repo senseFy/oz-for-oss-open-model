@@ -4,3 +4,4 @@ self_improvement:
 triage:
   bot_author_allowlist:
     - warp-dev-github-integration[bot]
+    - oz-for-x[bot]
