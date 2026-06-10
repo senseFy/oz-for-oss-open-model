@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any
 
 from . import conftest  # noqa: F401
@@ -36,6 +37,20 @@ def _review_state(run_id: str, *, pr_number: int = 42, repo: str = "acme/widgets
     )
 
 
+def _client_factory(pr_state: str) -> Any:
+    # Minimal GitHub client stub: supports the live PR-state lookup and
+    # leaves every other attribute missing so progress-comment updates
+    # fail, exercising the best-effort path.
+    def factory(_installation_id: int) -> Any:
+        return SimpleNamespace(
+            get_repo=lambda _full_name: SimpleNamespace(
+                get_pull=lambda _number: SimpleNamespace(state=pr_state)
+            )
+        )
+
+    return factory
+
+
 class CancelInFlightReviewRunsTest(unittest.TestCase):
     def test_cancels_matching_run_and_keeps_others(self) -> None:
         store = InMemoryStateStore()
@@ -44,16 +59,11 @@ class CancelInFlightReviewRunsTest(unittest.TestCase):
 
         cancelled: list[str] = []
 
-        def factory(_installation_id: int) -> Any:
-            # Progress-comment updates are best-effort; a failure here
-            # must not prevent the cancel + state cleanup.
-            raise RuntimeError("github outage")
-
         outcome = cancel_in_flight_review_runs(
             store=store,
             canceller=cancelled.append,
             payload=_payload(),
-            github_client_factory=factory,
+            github_client_factory=_client_factory("closed"),
         )
         self.assertEqual(outcome["action"], "cancelled")
         self.assertEqual(outcome["cancelled_run_ids"], ["run-1"])
@@ -111,6 +121,39 @@ class CancelInFlightReviewRunsTest(unittest.TestCase):
             payload=_payload(),
         )
         self.assertEqual(outcome["action"], "noop")
+        self.assertIsNotNone(load_run_state(store, "run-1"))
+
+    def test_skips_cancellation_when_pr_no_longer_closed(self) -> None:
+        # A stale ``closed`` delivery processed after a reopen must not
+        # cancel the fresh review run dispatched for the reopened PR.
+        store = InMemoryStateStore()
+        save_run_state(store, _review_state("run-1"))
+
+        outcome = cancel_in_flight_review_runs(
+            store=store,
+            canceller=lambda _run_id: self.fail("should not cancel"),
+            payload=_payload(),
+            github_client_factory=_client_factory("open"),
+        )
+        self.assertEqual(outcome["action"], "skipped")
+        self.assertIn("no longer closed", outcome["reason"])
+        self.assertIsNotNone(load_run_state(store, "run-1"))
+
+    def test_skips_cancellation_when_state_lookup_fails(self) -> None:
+        store = InMemoryStateStore()
+        save_run_state(store, _review_state("run-1"))
+
+        def factory(_installation_id: int) -> Any:
+            raise RuntimeError("github outage")
+
+        outcome = cancel_in_flight_review_runs(
+            store=store,
+            canceller=lambda _run_id: self.fail("should not cancel"),
+            payload=_payload(),
+            github_client_factory=factory,
+        )
+        self.assertEqual(outcome["action"], "skipped")
+        self.assertIn("could not verify", outcome["reason"])
         self.assertIsNotNone(load_run_state(store, "run-1"))
 
 

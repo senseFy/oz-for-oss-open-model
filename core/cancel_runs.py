@@ -6,6 +6,12 @@ target the closed PR, cancels them via the Oz API, and deletes the KV
 record on success so the cron poller never treats the cancellation as
 a workflow failure. Cancel failures fail open: the record is left in
 place and the cron drains the run with today's semantics.
+
+Webhook deliveries are not ordered, so a stale ``closed`` event can
+arrive after the PR was already reopened (and a fresh review run
+dispatched). Before cancelling anything, the helper re-checks the
+PR's live state on GitHub and skips cancellation unless the PR is
+still closed.
 """
 
 from __future__ import annotations
@@ -85,6 +91,30 @@ def _complete_progress_comment(
         )
 
 
+def _live_pr_state(
+    *,
+    github_client_factory: Callable[[int], Any],
+    installation_id: int,
+    repo_full_name: str,
+    pr_number: int,
+) -> str:
+    """Return the PR's current state on GitHub, or ``""`` when unknown."""
+    try:
+        pr = (
+            github_client_factory(installation_id)
+            .get_repo(repo_full_name)
+            .get_pull(pr_number)
+        )
+        return str(getattr(pr, "state", "") or "").strip().lower()
+    except Exception:
+        logger.exception(
+            "cancel-review-runs: failed to verify state of %s PR #%s",
+            repo_full_name,
+            pr_number,
+        )
+        return ""
+
+
 def _matches_pr(state: RunState, *, repo_full_name: str, pr_number: int) -> bool:
     if state.workflow != WORKFLOW_REVIEW_PR:
         return False
@@ -110,7 +140,9 @@ def cancel_in_flight_review_runs(
     response body:
 
     - ``{"action": "skipped", "reason": ...}`` when the payload is
-      missing the repository slug or PR number.
+      missing the repository slug or PR number, or when the PR is not
+      verifiably still closed on GitHub (stale ``closed`` delivery
+      after a reopen, or a failed state lookup).
     - ``{"action": "noop", ...}`` when no in-flight review run targets
       the PR (the common case).
     - ``{"action": "cancelled", "cancelled_run_ids": [...],
@@ -145,6 +177,36 @@ def cancel_in_flight_review_runs(
             "reason": "no in-flight review runs",
             "pr_number": pr_number,
         }
+
+    # Deliveries can arrive late or out of order, so the event alone
+    # does not prove the PR is still closed. Only cancel when the live
+    # GitHub state confirms it; an unknown state also skips so a stale
+    # delivery can never kill a run dispatched for a reopened PR.
+    if github_client_factory is not None:
+        try:
+            installation_id = int(
+                (payload.get("installation") or {}).get("id") or 0
+            )
+        except (TypeError, ValueError):
+            installation_id = 0
+        if installation_id <= 0:
+            installation_id = matches[0].installation_id
+        pr_state = _live_pr_state(
+            github_client_factory=github_client_factory,
+            installation_id=installation_id,
+            repo_full_name=full_name,
+            pr_number=pr_number,
+        )
+        if pr_state != "closed":
+            return {
+                "action": "skipped",
+                "reason": (
+                    "pull request is no longer closed"
+                    if pr_state == "open"
+                    else "could not verify pull request is closed"
+                ),
+                "pr_number": pr_number,
+            }
 
     cancelled_run_ids: list[str] = []
     failed_run_ids: list[str] = []
