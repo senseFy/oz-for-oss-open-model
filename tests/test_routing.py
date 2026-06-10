@@ -18,6 +18,7 @@ from core.routing import (
     OZ_AGENT_LOGIN,
     RouteDecision,
     WORKFLOW_ANNOUNCE_READY_ISSUE,
+    WORKFLOW_CANCEL_REVIEW_RUNS,
     WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE,
     WORKFLOW_CREATE_SPEC_FROM_ISSUE,
     WORKFLOW_PLAN_APPROVED,
@@ -811,6 +812,26 @@ class PullRequestEventTest(unittest.TestCase):
             },
         )
         self.assertIsNone(decision.workflow)
+
+    def test_closed_action_routes_to_cancel_review_runs(self) -> None:
+        decision = route_event(
+            "pull_request",
+            {
+                "action": "closed",
+                "pull_request": {"number": 42, "state": "closed"},
+            },
+        )
+        self.assertEqual(decision.workflow, WORKFLOW_CANCEL_REVIEW_RUNS)
+
+    def test_merged_close_routes_to_cancel_review_runs(self) -> None:
+        decision = route_event(
+            "pull_request",
+            {
+                "action": "closed",
+                "pull_request": {"number": 42, "state": "closed", "merged": True},
+            },
+        )
+        self.assertEqual(decision.workflow, WORKFLOW_CANCEL_REVIEW_RUNS)
 
 
 class PullRequestReviewCommentTest(unittest.TestCase):

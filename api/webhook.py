@@ -40,6 +40,7 @@ from core.dispatch import (
 from core.routing import (
     RouteDecision,
     WORKFLOW_ANNOUNCE_READY_ISSUE,
+    WORKFLOW_CANCEL_REVIEW_RUNS,
     WORKFLOW_PLAN_APPROVED,
     needs_triage_bot_author_allowlist,
     route_event,
@@ -133,6 +134,7 @@ def process_webhook_request(
     store: StateStore | None = None,
     sync_plan_approved: Callable[[Mapping[str, Any]], dict[str, Any] | None] | None = None,
     sync_announce_ready_issue: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None,
+    sync_cancel_review_runs: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None,
     triage_bot_author_allowlist: Iterable[str] | None = None,
     triage_bot_author_allowlist_loader: Callable[[Mapping[str, Any]], Iterable[str]] | None = None,
 ) -> WebhookResponse:
@@ -265,6 +267,25 @@ def process_webhook_request(
             body={**base_body, "announce_ready_issue": outcome},
         )
 
+    # ``cancel-review-runs`` is fully synchronous: the webhook cancels
+    # any in-flight review runs for the closed PR and never dispatches
+    # a cloud agent.
+    if decision.workflow == WORKFLOW_CANCEL_REVIEW_RUNS:
+        if sync_cancel_review_runs is None:
+            return WebhookResponse(status=202, body=base_body)
+        try:
+            outcome = sync_cancel_review_runs(payload)
+        except Exception as exc:
+            logger.exception("Synchronous cancel-review-runs failed")
+            return WebhookResponse(
+                status=500,
+                body={**base_body, "error": f"cancel-review-runs path failed: {exc}"},
+            )
+        return WebhookResponse(
+            status=202,
+            body={**base_body, "cancel_review_runs": outcome},
+        )
+
     if builder_registry is None or runner is None or config_factory is None or store is None:
         # The webhook handler is partially wired (e.g. unit tests that
         # only exercise routing). Keep returning 202 + reason so the
@@ -357,6 +378,7 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801 - Vercel requires this exac
             store=wiring["store"],
             sync_plan_approved=wiring["sync_plan_approved"],
             sync_announce_ready_issue=wiring["sync_announce_ready_issue"],
+            sync_cancel_review_runs=wiring["sync_cancel_review_runs"],
             triage_bot_author_allowlist_loader=wiring[
                 "triage_bot_author_allowlist_loader"
             ],
@@ -390,6 +412,7 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
 
     from api.cron import build_state_store
     from core.builders import build_builder_registry
+    from core.cancel_runs import cancel_in_flight_review_runs
     from core.github_app import fetch_installation_token
     from oz.oz_client import (  # type: ignore[import-not-found]
         build_agent_config,
@@ -529,6 +552,16 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
             repo_handle, payload=payload
         )
 
+    store = build_state_store()
+
+    def sync_cancel_review_runs(payload: Mapping[str, Any]) -> dict[str, Any]:
+        return cancel_in_flight_review_runs(
+            store=store,
+            canceller=sdk_client.agent.runs.cancel,
+            payload=payload,
+            github_client_factory=_mint_github_client,
+        )
+
     def triage_bot_author_allowlist_loader(payload: Mapping[str, Any]) -> frozenset[str]:
         full_name = str(
             (payload.get("repository") or {}).get("full_name") or ""
@@ -549,9 +582,10 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
         "builder_registry": builder_registry,
         "runner": runner,
         "config_factory": config_factory,
-        "store": build_state_store(),
+        "store": store,
         "sync_plan_approved": sync_plan_approved,
         "sync_announce_ready_issue": sync_announce_ready_issue,
+        "sync_cancel_review_runs": sync_cancel_review_runs,
         "triage_bot_author_allowlist_loader": triage_bot_author_allowlist_loader,
     }
 

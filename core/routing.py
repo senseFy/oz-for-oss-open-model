@@ -19,6 +19,8 @@ Webhook coverage today:
 
   - ``opened`` / ``reopened`` (non-draft) and ``ready_for_review`` route to
     ``review-pull-request``.
+  - ``closed`` routes to ``cancel-review-runs`` so the webhook can
+    eagerly cancel in-flight review runs for the PR.
   - ``review_requested`` routes to ``review-pull-request`` when
     the requested reviewer is ``oz-agent``.
   - ``labeled`` routes to ``review-pull-request`` for the
@@ -91,6 +93,7 @@ WORKFLOW_CREATE_SPEC_FROM_ISSUE = "create-spec-from-issue"
 WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE = "create-implementation-from-issue"
 WORKFLOW_PLAN_APPROVED = "plan-approved"
 WORKFLOW_ANNOUNCE_READY_ISSUE = "announce-ready-issue"
+WORKFLOW_CANCEL_REVIEW_RUNS = "cancel-review-runs"
 
 OZ_AGENT_LOGIN = "oz-agent"
 OZ_REVIEW_LABEL = "oz-review"
@@ -419,6 +422,13 @@ def _route_pull_request(payload: dict[str, Any]) -> RouteDecision:
     pr = payload.get("pull_request") or {}
     if not isinstance(pr, dict):
         return RouteDecision(None, "missing pull_request payload")
+    if action == "closed":
+        # Both merged and unmerged closes route here so any in-flight
+        # review run for the PR can be eagerly cancelled.
+        return RouteDecision(
+            WORKFLOW_CANCEL_REVIEW_RUNS,
+            "pull_request closed; cancelling in-flight review runs",
+        )
     if pr.get("state") != "open":
         return RouteDecision(None, "pull_request is not open")
     if action in {"opened", "reopened"} and not pr.get("draft", False):
@@ -538,6 +548,7 @@ __all__ = [
     "RouteDecision",
     "TRIAGED_LABEL",
     "WORKFLOW_ANNOUNCE_READY_ISSUE",
+    "WORKFLOW_CANCEL_REVIEW_RUNS",
     "WORKFLOW_CREATE_IMPLEMENTATION_FROM_ISSUE",
     "WORKFLOW_CREATE_SPEC_FROM_ISSUE",
     "WORKFLOW_PLAN_APPROVED",
