@@ -23,6 +23,7 @@ from api.webhook import process_webhook_request
 from core.dispatch import DispatchRequest
 from core.routing import (
     WORKFLOW_ANNOUNCE_READY_ISSUE,
+    WORKFLOW_CANCEL_REVIEW_RUNS,
     WORKFLOW_PLAN_APPROVED,
     WORKFLOW_REVIEW_PR,
     WORKFLOW_TRIAGE_NEW_ISSUES,
@@ -547,6 +548,47 @@ class SynchronousAnnounceReadyIssuePathTest(unittest.TestCase):
         self.assertIn(
             "announce-ready-issue path failed", response.body["error"]
         )
+
+
+class SynchronousCancelReviewRunsPathTest(unittest.TestCase):
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "action": "closed",
+            "repository": {"full_name": "acme/widgets"},
+            "installation": {"id": 1234},
+            "pull_request": {"number": 42, "state": "closed"},
+            "sender": {"login": "alice"},
+        }
+
+    def test_cancel_outcome_short_circuits_dispatch(self) -> None:
+        body, signature = _signed_envelope(self._payload())
+
+        sync_calls: list[Mapping[str, Any]] = []
+
+        def sync_cancel(payload: Mapping[str, Any]) -> dict[str, Any]:
+            sync_calls.append(payload)
+            return {"action": "cancelled", "cancelled_run_ids": ["run-1"]}
+
+        runner_called = MagicMock(side_effect=AssertionError("should not run"))
+        response = process_webhook_request(
+            body=body,
+            signature_header=signature,
+            event_header="pull_request",
+            delivery_id="delivery-crr-1",
+            secret=_SECRET,
+            builder_registry={},
+            runner=runner_called,
+            config_factory=lambda name, role: {},
+            store=InMemoryStateStore(),
+            sync_cancel_review_runs=sync_cancel,
+        )
+        self.assertEqual(response.status, 202)
+        self.assertEqual(response.body["workflow"], WORKFLOW_CANCEL_REVIEW_RUNS)
+        self.assertEqual(
+            response.body["cancel_review_runs"]["cancelled_run_ids"], ["run-1"]
+        )
+        self.assertEqual(len(sync_calls), 1)
+        runner_called.assert_not_called()
 
 
 if __name__ == "__main__":
