@@ -1454,37 +1454,37 @@ def apply_review_result(
         else "COMMENT"
     )
     if requires_human_reviewer and verdict == _VERDICT_APPROVE:
-        recommended_reviewers = _reviewer_from_existing_review_request(
-            pr,
-            owner=owner,
-            pr_author_login=pr_author_login,
-        )
-        if not recommended_reviewers:
-            recommended_reviewers = _reviewer_from_pr_assignee(
+        ownership_areas = [
+            OwnershipArea(
+                name=str(entry.get("name") or ""),
+                owners=[
+                    str(owner_login)
+                    for owner_login in (entry.get("owners") or [])
+                    if isinstance(owner_login, str) and owner_login.strip()
+                ],
+                matches=str(entry.get("matches") or ""),
+            )
+            for entry in (context.get("ownership_areas") or [])
+            if isinstance(entry, dict) and entry.get("name")
+        ]
+        recommended_reviewers = (
+            _reviewer_from_existing_review_request(
+                pr,
+                owner=owner,
+                pr_author_login=pr_author_login,
+            )
+            or _reviewer_from_pr_assignee(
                 pr,
                 pr_author_login=pr_author_login,
             )
-        if not recommended_reviewers:
-            ownership_areas = [
-                OwnershipArea(
-                    name=str(entry.get("name") or ""),
-                    owners=[
-                        str(owner_login)
-                        for owner_login in (entry.get("owners") or [])
-                        if isinstance(owner_login, str) and owner_login.strip()
-                    ],
-                    matches=str(entry.get("matches") or ""),
-                )
-                for entry in (context.get("ownership_areas") or [])
-                if isinstance(entry, dict) and entry.get("name")
-            ]
-            recommended_reviewers = _resolve_recommended_reviewers(
+            or _resolve_recommended_reviewers(
                 result,
                 ownership_areas=ownership_areas,
                 repo_handle=github,
                 pr_author_login=pr_author_login,
                 changed_paths=list(diff_line_map),
             )
+        )
     else:
         recommended_reviewers = []
     if verdict == _VERDICT_APPROVE:
