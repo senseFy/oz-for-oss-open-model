@@ -554,6 +554,36 @@ def _reviewer_from_pr_assignee(
     return []
 
 
+def _reviewer_from_existing_review_request(
+    pr: Any,
+    *,
+    owner: str,
+    pr_author_login: str,
+) -> list[str]:
+    for reviewer in get_field(pr, "requested_reviewers", []) or []:
+        if is_automation_user(reviewer):
+            continue
+        login = _normalize_reviewer_login(
+            get_login(reviewer),
+            pr_author_login=pr_author_login,
+        )
+        if login:
+            logger.info(
+                "review-pr: using existing requested reviewer %s",
+                login,
+            )
+            return [login]
+    for team in get_field(pr, "requested_teams", []) or []:
+        slug = str(get_field(team, "slug", "") or "").strip().lstrip("@")
+        if slug:
+            logger.info(
+                "review-pr: using existing requested team reviewer %s",
+                slug,
+            )
+            return [f"{owner}/{slug}"]
+    return []
+
+
 def _deterministic_reviewer_from_stakeholders(
     entries: list[dict[str, Any]],
     *,
@@ -1424,31 +1454,37 @@ def apply_review_result(
         else "COMMENT"
     )
     if requires_human_reviewer and verdict == _VERDICT_APPROVE:
-        recommended_reviewers = _reviewer_from_pr_assignee(
-            pr,
-            pr_author_login=pr_author_login,
-        )
-        if not recommended_reviewers:
-            ownership_areas = [
-                OwnershipArea(
-                    name=str(entry.get("name") or ""),
-                    owners=[
-                        str(owner_login)
-                        for owner_login in (entry.get("owners") or [])
-                        if isinstance(owner_login, str) and owner_login.strip()
-                    ],
-                    matches=str(entry.get("matches") or ""),
-                )
-                for entry in (context.get("ownership_areas") or [])
-                if isinstance(entry, dict) and entry.get("name")
-            ]
-            recommended_reviewers = _resolve_recommended_reviewers(
+        ownership_areas = [
+            OwnershipArea(
+                name=str(entry.get("name") or ""),
+                owners=[
+                    str(owner_login)
+                    for owner_login in (entry.get("owners") or [])
+                    if isinstance(owner_login, str) and owner_login.strip()
+                ],
+                matches=str(entry.get("matches") or ""),
+            )
+            for entry in (context.get("ownership_areas") or [])
+            if isinstance(entry, dict) and entry.get("name")
+        ]
+        recommended_reviewers = (
+            _reviewer_from_existing_review_request(
+                pr,
+                owner=owner,
+                pr_author_login=pr_author_login,
+            )
+            or _reviewer_from_pr_assignee(
+                pr,
+                pr_author_login=pr_author_login,
+            )
+            or _resolve_recommended_reviewers(
                 result,
                 ownership_areas=ownership_areas,
                 repo_handle=github,
                 pr_author_login=pr_author_login,
                 changed_paths=list(diff_line_map),
             )
+        )
     else:
         recommended_reviewers = []
     if verdict == _VERDICT_APPROVE:

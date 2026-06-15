@@ -540,6 +540,75 @@ class ApplyReviewResultVerdictTest(unittest.TestCase):
         pr.create_review.assert_called_once()
         pr.create_review_request.assert_called_once_with(reviewers=["assigned-owner"])
 
+    def test_approve_non_member_pr_prefers_existing_requested_reviewer(self) -> None:
+        pr = MagicMock()
+        pr.requested_reviewers = [SimpleNamespace(login="requested-owner")]
+        pr.assignees = [SimpleNamespace(login="assigned-owner")]
+        github = self._make_github(pr)
+        progress = MagicMock()
+        with patch("workflows.review_pr._resolve_recommended_reviewers") as resolve:
+            apply_review_result(
+                github,
+                context=self._make_context(
+                    is_non_member=True,
+                    ownership_areas=[
+                        {
+                            "name": "Docs API",
+                            "owners": ["api-owner"],
+                            "matches": "API reference docs and generated documentation",
+                        }
+                    ],
+                ),
+                run=MagicMock(),
+                result={
+                    "verdict": "APPROVE",
+                    "summary": "Looks good",
+                    "comments": [],
+                    "recommended_area": "Docs API",
+                },
+                progress=progress,
+            )
+        resolve.assert_not_called()
+        pr.create_review.assert_called_once()
+        pr.create_review_request.assert_called_once_with(
+            reviewers=["requested-owner"]
+        )
+
+    def test_approve_non_member_pr_prefers_existing_requested_team(self) -> None:
+        pr = MagicMock()
+        pr.requested_reviewers = []
+        pr.requested_teams = [SimpleNamespace(slug="reviewers")]
+        pr.assignees = [SimpleNamespace(login="assigned-owner")]
+        github = self._make_github(pr)
+        progress = MagicMock()
+        with patch("workflows.review_pr._resolve_recommended_reviewers") as resolve:
+            apply_review_result(
+                github,
+                context=self._make_context(
+                    is_non_member=True,
+                    ownership_areas=[
+                        {
+                            "name": "Docs API",
+                            "owners": ["api-owner"],
+                            "matches": "API reference docs and generated documentation",
+                        }
+                    ],
+                ),
+                run=MagicMock(),
+                result={
+                    "verdict": "APPROVE",
+                    "summary": "Looks good",
+                    "comments": [],
+                    "recommended_area": "Docs API",
+                },
+                progress=progress,
+            )
+        resolve.assert_not_called()
+        pr.create_review.assert_called_once()
+        pr.create_review_request.assert_called_once_with(
+            team_reviewers=["reviewers"]
+        )
+
     def test_approve_member_pr_uses_comment_event_without_reviewer_request(self) -> None:
         pr = MagicMock()
         github = self._make_github(pr)
