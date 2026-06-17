@@ -51,6 +51,7 @@ from core.signatures import (
     verify_signature,
 )
 from core.state import StateStore
+from oz.backend import use_open_model_backend
 
 logger = logging.getLogger(__name__)
 
@@ -408,8 +409,6 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
     :func:`process_webhook_request` with stubs) does not need any of
     these dependencies on PYTHONPATH.
     """
-    from oz_agent_sdk import OzAPI  # type: ignore[import-not-found]
-
     from api.cron import build_state_store
     from core.builders import build_builder_registry
     from core.cancel_runs import cancel_in_flight_review_runs
@@ -484,33 +483,56 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
         github_client_factory=_client_for_payload,
     )
 
-    sdk_client = OzAPI(
-        api_key=os.environ["WARP_API_KEY"],
-        base_url=os.environ["WARP_API_BASE_URL"],
-    )
-
-    def runner(*, prompt, title, config, skill, team, attachments=None):
-        request = {
-            "prompt": prompt,
-            "title": title,
-            "config": config,
-            "team": team,
-        }
-        if skill:
-            request["skill"] = skill
-        if attachments:
-            request["attachments"] = tuple(attachments)
-        return sdk_client.agent.run(**request)
-
     from pathlib import Path as _Path
 
-    def config_factory(config_name: str, role: str) -> Mapping[str, Any]:
-        return build_agent_config(
-            config_name=config_name,
-            workspace=_Path("/tmp"),
-            role=role,
+    if use_open_model_backend():
+        from oz.open_model_backend import (  # type: ignore[import-not-found]
+            build_open_model_backend,
+            build_open_model_config_factory,
         )
 
+        open_model_backend = build_open_model_backend()
+        runner = open_model_backend
+        config_factory = build_open_model_config_factory()
+        canceller = open_model_backend.cancel
+    else:
+        from oz_agent_sdk import OzAPI  # type: ignore[import-not-found]
+
+        sdk_client = OzAPI(
+            api_key=os.environ["WARP_API_KEY"],
+            base_url=os.environ["WARP_API_BASE_URL"],
+        )
+
+        def runner(
+            *,
+            prompt,
+            title,
+            config,
+            skill,
+            team,
+            attachments=None,
+            workflow=None,
+        ):
+            request = {
+                "prompt": prompt,
+                "title": title,
+                "config": config,
+                "team": team,
+            }
+            if skill:
+                request["skill"] = skill
+            if attachments:
+                request["attachments"] = tuple(attachments)
+            return sdk_client.agent.run(**request)
+
+        def config_factory(config_name: str, role: str) -> Mapping[str, Any]:
+            return build_agent_config(
+                config_name=config_name,
+                workspace=_Path("/tmp"),
+                role=role,
+            )
+
+        canceller = sdk_client.agent.runs.cancel
 
     def sync_plan_approved(
         payload: Mapping[str, Any],
@@ -557,7 +579,7 @@ def _build_runtime_wiring(*, body: bytes) -> dict[str, Any]:
     def sync_cancel_review_runs(payload: Mapping[str, Any]) -> dict[str, Any]:
         return cancel_in_flight_review_runs(
             store=store,
-            canceller=sdk_client.agent.runs.cancel,
+            canceller=canceller,
             payload=payload,
             github_client_factory=_mint_github_client,
         )

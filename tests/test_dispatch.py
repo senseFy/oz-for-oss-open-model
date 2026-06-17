@@ -88,6 +88,7 @@ class DispatchRunTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         invocation = calls[0]
         self.assertEqual(invocation["title"], "PR review #1")
+        self.assertEqual(invocation["workflow"], "review-pull-request")
         # Bare ``review-pr`` is resolved into the shared common-skills spec
         # the Oz API expects before reaching the runner.
         self.assertEqual(

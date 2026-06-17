@@ -28,6 +28,7 @@ from core.poll_runs import (
     drain_in_flight_runs,
 )
 from core.state import StateStore
+from oz.backend import use_open_model_backend
 
 logger = logging.getLogger(__name__)
 
@@ -238,15 +239,21 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801 - Vercel requires this exac
                 return
         try:
             store = build_state_store()
-            from oz_agent_sdk import OzAPI  # type: ignore[import-not-found]
+            if use_open_model_backend():
+                from oz.open_model_backend import build_open_model_backend
 
-            client = OzAPI(
-                api_key=os.environ["WARP_API_KEY"],
-                base_url=os.environ["WARP_API_BASE_URL"],
-            )
+                retriever = build_open_model_backend()
+            else:
+                from oz_agent_sdk import OzAPI  # type: ignore[import-not-found]
+
+                client = OzAPI(
+                    api_key=os.environ["WARP_API_KEY"],
+                    base_url=os.environ["WARP_API_BASE_URL"],
+                )
+                retriever = client.agent.runs
             outcomes = run_cron_tick(
                 store=store,
-                retriever=client.agent.runs,
+                retriever=retriever,
                 max_attempts=_optional_positive_int_env(
                     "OZ_IN_FLIGHT_MAX_ATTEMPTS",
                     DEFAULT_MAX_IN_FLIGHT_ATTEMPTS,

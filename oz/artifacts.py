@@ -10,6 +10,8 @@ from oz_agent_sdk import OzAPI
 from oz_agent_sdk.types import AgentGetArtifactResponse
 from oz_agent_sdk.types.agent import RunItem
 
+from .backend import use_open_model_backend
+from .open_model_backend import build_open_model_backend
 from .oz_client import build_oz_client
 
 # Retry policy for artifact downloads. A transient CDN or S3 blip can surface as
@@ -248,6 +250,8 @@ def load_run_artifact(
     the per-workflow result schemas validate consistently while sharing
     the same artifact-fetch pipeline.
     """
+    if use_open_model_backend():
+        return build_open_model_backend().load_json_artifact(run_id, filename)
     return poll_for_artifact(
         run_id,
         filename=filename,
