@@ -96,6 +96,8 @@ This fork has not yet changed:
 ## Next Refactor: Runtime Provider Abstraction
 
 The next architecture PR should introduce a runtime provider boundary.
+The detailed scope is tracked in
+[`specs/runtime-provider-abstraction`](../specs/runtime-provider-abstraction/).
 
 Target shape:
 
