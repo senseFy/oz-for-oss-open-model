@@ -93,13 +93,14 @@ This fork has not yet changed:
 - Vercel KV / Upstash Redis as the production run-state store
 - issue triage/spec/implementation execution paths
 
-## Next Refactor: Runtime Provider Abstraction
+## Runtime Provider Abstraction
 
-The next architecture PR should introduce a runtime provider boundary.
+The first runtime-provider abstraction pass introduces a runtime provider
+boundary while keeping Vercel as the default provider.
 The detailed scope is tracked in
 [`specs/runtime-provider-abstraction`](../specs/runtime-provider-abstraction/).
 
-Target shape:
+Current shape:
 
 ```text
 runtime/
@@ -108,19 +109,20 @@ runtime/
   common.py
   vercel.py
   stores/
+    __init__.py
     upstash.py
 ```
 
-Desired split:
+Split:
 
 - `runtime.common` owns platform-neutral webhook and drain orchestration.
 - `runtime.vercel` adapts Vercel's `BaseHTTPRequestHandler` entrypoints to the
   common runtime functions.
 - `runtime.stores.upstash` owns the Upstash/Vercel KV `StateStore`
   implementation.
-- `api/webhook.py` and `api/cron.py` become thin compatibility entrypoints.
+- `api/webhook.py` and `api/cron.py` are thin compatibility entrypoints.
 
-Out of scope for that PR:
+Out of scope for this pass:
 
 - implementing Cloudflare
 - implementing local daemon runtime
