@@ -13,6 +13,10 @@ Triage label definitions live in [`../.github/issue-triage/config.json`](../.git
 ├── api/                          # Vercel serverless entrypoints
 │   ├── webhook.py                # POST /api/webhook
 │   └── cron.py                   # GET  /api/cron (1 minute schedule)
+├── runtime/                      # Runtime-provider wiring and store adapters
+│   ├── common.py                 # Platform-neutral webhook + drain orchestration
+│   ├── vercel.py                 # Vercel production wiring
+│   └── stores/upstash.py         # Upstash/Vercel KV StateStore adapter
 ├── core/                          # Shared webhook + helper code
 │   ├── builders.py               # Public builder registry
 │   ├── dispatch.py               # Oz cloud-agent dispatcher
@@ -45,9 +49,9 @@ Every agent-backed flow follows the same sequence:
 2. **Signature verification.** [`../core/signatures.py`](../core/signatures.py) verifies the `X-Hub-Signature-256` header against `OZ_GITHUB_WEBHOOK_SECRET`.
 3. **Routing.** [`../core/routing.py`](../core/routing.py) maps the event to a workflow such as `review-pull-request`, `respond-to-pr-comment`, `verify-pr-comment`, `triage-new-issues`, `create-spec-from-issue`, `create-implementation-from-issue`, `plan-approved`, or `announce-ready-issue`.
 4. **Synchronous preflight where needed.** Hybrid workflows such as `plan-approved` and `announce-ready-issue` run deterministic GitHub mutations inline when they do not need an agent.
-5. **Prompt construction + dispatch.** The builder registry creates a `DispatchRequest`; [`../core/dispatch.py`](../core/dispatch.py) starts an Oz cloud run and saves a `RunState` record in Vercel KV.
+5. **Prompt construction + dispatch.** The runtime provider builds the workflow registry and state store, the builder registry creates a `DispatchRequest`, and [`../core/dispatch.py`](../core/dispatch.py) starts an agent run and saves a `RunState` record.
 6. **Progress comment creation.** After the Oz run id is known, the dispatch hook creates or updates the workflow progress comment and persists `progress_comment_id` in the saved run state.
 7. **202 response.** The webhook returns `202 Accepted` quickly so GitHub delivery stays green.
-8. **Cron drain.** [`../api/cron.py`](../api/cron.py) polls in-flight Oz runs, refreshes session links while they run, loads artifacts on success, and invokes the workflow's result applier to mutate GitHub.
+8. **Cron drain.** [`../api/cron.py`](../api/cron.py) adapts the Vercel cron request into the runtime layer, which polls in-flight runs, refreshes session links while they run, loads artifacts on success, and invokes the workflow's result applier to mutate GitHub.
 
 The Oz run id stored as `RunState.run_id` is the canonical progress metadata identity. `progress_comment_id` is the durable GitHub comment locator used by cron-side handlers.

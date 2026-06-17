@@ -19,6 +19,7 @@ The intent is not to rebrand Oz. The intent is to study, preserve, and extend th
 - [Platform overview](docs/platform.md) — agent roles, prompt construction, and how skills back each workflow.
 - [Architecture](docs/architecture.md) — repository layout and the end-to-end webhook flow.
 - [Open-model architecture](docs/open-model-architecture.md) — fork-specific architecture direction, runtime boundaries, and upstream differences.
+- [Runtime provider abstraction spec](specs/runtime-provider-abstraction/tech.md) — first-phase plan for extracting Vercel runtime wiring behind a provider boundary.
 - [Onboarding](docs/onboarding.md) — install the GitHub App and deploy the Vercel control plane.
 - [Open-model review backend spec](specs/open-model-review-backend/tech.md) — staged architecture for the provider-configurable backend.
 - [Contributing](CONTRIBUTING.md) — issue/PR workflow, label conventions, and local development.
