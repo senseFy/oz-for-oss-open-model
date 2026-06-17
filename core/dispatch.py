@@ -168,6 +168,7 @@ class AgentRunner(Protocol):
         skill: str | None,
         team: bool,
         attachments: tuple[SdkAttachment, ...] | None = None,
+        workflow: str | None = None,
     ) -> Any: ...
 
 
@@ -213,6 +214,7 @@ def dispatch_run(
         skill=skill,
         team=True,
         attachments=request.attachments or None,
+        workflow=request.workflow,
     )
     run_id = str(getattr(response, "run_id", "") or "")
     if not run_id:
