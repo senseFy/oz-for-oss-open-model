@@ -63,9 +63,9 @@ annotated PR diff, and stores `review.json` for the existing GitHub applier.
 
 | Layer | Current default | Current alternative | Planned alternatives |
 |---|---|---|---|
-| Delivery runtime | Vercel | none | local daemon, Docker, Cloudflare, Fly.io, Railway |
-| State store | Vercel KV / Upstash Redis | file store for open-model runs only | SQLite, Cloudflare KV/D1/Durable Objects |
-| Scheduler | Vercel Cron | manual/local process for backend worker | local loop, Cloudflare Cron Trigger |
+| Delivery runtime | Vercel | local daemon | Docker, Cloudflare, Fly.io, Railway |
+| State store | Vercel KV / Upstash Redis | local file store | SQLite, Cloudflare KV/D1/Durable Objects |
+| Scheduler | Vercel Cron | local daemon loop | Cloudflare Cron Trigger |
 | Agent/model backend | Oz | open-model | provider adapters, repair/eval passes |
 | Model provider | Warp/Oz managed | OpenAI-compatible endpoint | LiteLLM, OpenRouter profiles, local gateways |
 
@@ -139,17 +139,18 @@ variable management, and an easy Upstash integration.
 
 ### Local Daemon
 
-The local daemon should be the easiest open-source quickstart path. It should
-combine webhook receiver, scheduler loop, file/SQLite state, and open-model
+The local daemon is the easiest open-source quickstart path. It combines the
+webhook receiver, scheduler loop, file-backed run state, and open-model
 execution in one process.
 
 Possible command:
 
 ```sh
-python scripts/reveal_bot_local.py --repo owner/name
+python scripts/reveal_bot_local.py --host 127.0.0.1 --port 8788
 ```
 
-The goal is a low-friction smoke test, not production hardening.
+The goal is a low-friction smoke test and small self-hosted path, not production
+hardening.
 
 ### Cloudflare
 
@@ -195,4 +196,17 @@ synthetic run
   -> local open-model backend
   -> OpenRouter/OpenAI-compatible provider
   -> review.json artifact
+```
+
+Current local daemon path:
+
+```text
+GitHub App webhook
+  -> local HTTP server
+  -> file-backed run state
+  -> local open-model backend
+  -> OpenAI-compatible model provider
+  -> review.json
+  -> local drain loop
+  -> GitHub review
 ```

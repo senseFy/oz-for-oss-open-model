@@ -15,8 +15,9 @@ Triage label definitions live in [`../.github/issue-triage/config.json`](../.git
 │   └── cron.py                   # GET  /api/cron (1 minute schedule)
 ├── runtime/                      # Runtime-provider wiring and store adapters
 │   ├── common.py                 # Platform-neutral webhook + drain orchestration
+│   ├── local.py                  # Local daemon runtime provider
 │   ├── vercel.py                 # Vercel production wiring
-│   └── stores/upstash.py         # Upstash/Vercel KV StateStore adapter
+│   └── stores/                   # File and Upstash StateStore adapters
 ├── core/                          # Shared webhook + helper code
 │   ├── builders.py               # Public builder registry
 │   ├── dispatch.py               # Oz cloud-agent dispatcher

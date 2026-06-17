@@ -19,12 +19,25 @@ The intent is not to rebrand Oz. The intent is to study, preserve, and extend th
 - [Platform overview](docs/platform.md) — agent roles, prompt construction, and how skills back each workflow.
 - [Architecture](docs/architecture.md) — repository layout and the end-to-end webhook flow.
 - [Open-model architecture](docs/open-model-architecture.md) — fork-specific architecture direction, runtime boundaries, and upstream differences.
+- [Local runtime](docs/local-runtime.md) — run the webhook receiver, local state store, model worker, and drain loop in one process.
 - [Runtime provider abstraction spec](specs/runtime-provider-abstraction/tech.md) — first-phase plan for extracting Vercel runtime wiring behind a provider boundary.
 - [Onboarding](docs/onboarding.md) — install the GitHub App and deploy the Vercel control plane.
 - [Open-model review backend spec](specs/open-model-review-backend/tech.md) — staged architecture for the provider-configurable backend.
 - [Contributing](CONTRIBUTING.md) — issue/PR workflow, label conventions, and local development.
 
 ## Open-Model Review Backend
+
+Run the single-process local runtime:
+
+```sh
+cp .env.example .env.local
+source .venv/bin/activate
+python scripts/reveal_bot_local.py --host 127.0.0.1 --port 8788
+```
+
+The local runtime serves `POST /webhook`, stores in-flight run state on disk,
+processes local open-model review runs, and drains completed results back to
+GitHub. See [Local runtime](docs/local-runtime.md) for setup details.
 
 Run the backend service:
 
